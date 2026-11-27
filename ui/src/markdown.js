@@ -12,12 +12,8 @@ const TOKEN_RE = /\x00P(\d+)\x00/g;
  */
 export function sanitizeMarkdownUrl(rawUrl, { repoUrl = "", sha = "" } = {}) {
   let cleaned = String(rawUrl || "").replaceAll("\0", "").trim();
-  if (cleaned.startsWith("<") && cleaned.endsWith(">")) {
-    cleaned = cleaned.slice(1, -1).trim();
-  }
-  if (!cleaned || cleaned.startsWith("#") || /[\s"'<>\\]/.test(cleaned)) {
-    return null;
-  }
+  if (cleaned.startsWith("<") && cleaned.endsWith(">")) cleaned = cleaned.slice(1, -1).trim();
+  if (!cleaned || cleaned.startsWith("#") || /[\s"'<>\\]/.test(cleaned)) return null;
 
   if (/^https?:\/\//i.test(cleaned)) {
     try {
@@ -27,107 +23,188 @@ export function sanitizeMarkdownUrl(rawUrl, { repoUrl = "", sha = "" } = {}) {
       return null;
     }
   }
-
-  if (cleaned.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(cleaned)) {
-    return null;
-  }
+  if (cleaned.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(cleaned)) return null;
 
   const trimmedSha = typeof sha === "string" ? sha.trim() : "";
   if (repoUrl && trimmedSha && /^https:\/\/github\.com\//i.test(repoUrl)) {
     try {
-      const base = `${repoUrl.replace(/\/+$/, "")}/blob/${encodeURIComponent(trimmedSha)}/`;
-      const rel = cleaned.replace(/^\.?\/+/, "");
-      const resolved = new URL(rel, base);
+      let repoEnd = repoUrl.length;
+      while (repoEnd > 0 && repoUrl[repoEnd - 1] === "/") repoEnd--;
+      const base = `${repoUrl.slice(0, repoEnd)}/blob/${encodeURIComponent(trimmedSha)}/`;
+      const resolved = new URL(cleaned.replace(/^\.?\/+/, ""), base);
       return resolved.origin === "https://github.com" ? resolved.href : null;
     } catch {
       return null;
     }
   }
-
   return null;
 }
 
 function renderLinkElement(labelHtml, safeHref, linkMode) {
   if (!safeHref) return labelHtml;
   const hrefAttr = esc(safeHref);
-  if (linkMode === "button") {
-    return `<button type="button" class="md-link" data-open-url="${hrefAttr}" title="${hrefAttr}">${labelHtml}</button>`;
+  return linkMode === "button"
+    ? `<button type="button" class="md-link" data-open-url="${hrefAttr}" title="${hrefAttr}">${labelHtml}</button>`
+    : `<a class="md-link" href="${hrefAttr}" target="_blank" rel="noopener noreferrer">${labelHtml}</a>`;
+}
+
+function replacePairedDelimiter(text, delim, openTag, closeTag) {
+  let out = "";
+  let pos = 0;
+  const dLen = delim.length;
+  while (pos < text.length) {
+    const start = text.indexOf(delim, pos);
+    let end = start === -1 ? -1 : text.indexOf(delim, start + dLen);
+    if (end === -1) return out + text.slice(pos);
+    if (end === start + dLen) {
+      out += text.slice(pos, start + dLen);
+      pos = start + dLen;
+      continue;
+    }
+    if (delim === "**") while (end + dLen < text.length && text[end + dLen] === "*") end++;
+    out += text.slice(pos, start) + openTag + text.slice(start + dLen, end) + closeTag;
+    pos = end + dLen;
   }
-  return `<a class="md-link" href="${hrefAttr}" target="_blank" rel="noopener noreferrer">${labelHtml}</a>`;
+  return out;
 }
 
 function formatEmphasis(escapedText) {
-  return escapedText
-    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/__(.+?)__/g, "<strong>$1</strong>")
-    .replace(/(^|[^\w*])\*([^*\n]+?)\*(?!\*)/g, "$1<em>$2</em>")
-    .replace(/~~(.+?)~~/g, "<del>$1</del>");
+  let s = replacePairedDelimiter(escapedText, "**", "<strong>", "</strong>");
+  s = replacePairedDelimiter(s, "__", "<strong>", "</strong>");
+  s = s.replace(/(^|[^\w*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+  return replacePairedDelimiter(s, "~~", "<del>", "</del>");
+}
+
+function buildDelimiterMaps(line) {
+  const n = line.length;
+  const closeBracketOf = new Int32Array(n).fill(-1);
+  const closeParenOf = new Int32Array(n).fill(-1);
+  const bracketStack = [];
+  const parenStack = [];
+  for (let k = 0; k < n; k++) {
+    const ch = line[k];
+    if (ch === "[") bracketStack.push(k);
+    else if (ch === "]" && bracketStack.length > 0) closeBracketOf[bracketStack.pop()] = k;
+    else if (ch === "(") parenStack.push(k);
+    else if (ch === ")") {
+      if (parenStack.length > 0) closeParenOf[parenStack.pop()] = k;
+    } else if (ch === " " || ch === "\t") parenStack.length = 0;
+  }
+  return { closeBracketOf, closeParenOf };
+}
+
+function matchBracketParen(line, openBracket, limit, closeBracketOf, closeParenOf) {
+  const cb = closeBracketOf[openBracket];
+  if (cb === -1 || cb >= limit || cb + 1 >= limit || line[cb + 1] !== "(") return null;
+  const cp = closeParenOf[cb + 1];
+  return cp !== -1 && cp < limit ? { cb, cp } : null;
+}
+
+function flattenLabelText(line, start, end, closeBracketOf, closeParenOf, stash, restore) {
+  let out = "";
+  for (let k = start; k < end; ) {
+    const isImg = line[k] === "!" && k + 1 < end && line[k + 1] === "[";
+    const bracketIdx = isImg ? k + 1 : line[k] === "[" ? k : -1;
+    const m = bracketIdx !== -1 ? matchBracketParen(line, bracketIdx, end, closeBracketOf, closeParenOf) : null;
+    if (m && (isImg || m.cb > bracketIdx + 1)) {
+      const inner = line.slice(bracketIdx + 1, m.cb);
+      out += stash(isImg ? restore(esc(inner.trim() || "View image")) : restore(formatEmphasis(esc(inner))));
+      k = m.cp + 1;
+    } else out += line[k++];
+  }
+  return out;
+}
+
+/**
+ * Replace Markdown images, linked badges, and links in linear O(N) time without nested regex quantifiers.
+ * @param {string} line
+ * @param {(html: string) => string} stash
+ * @param {{ linkMode?: "anchor" | "button", repoUrl?: string, sha?: string }} opts
+ * @param {(text: string) => string} [restore]
+ * @returns {string}
+ */
+export function replaceMarkdownLinksAndImages(line, stash, opts, restore = (t) => t) {
+  if (!line || !line.includes("[")) return line;
+  const { closeBracketOf, closeParenOf } = buildDelimiterMaps(line);
+  const n = line.length;
+  let out = "";
+
+  for (let i = 0; i < n; ) {
+    const isImg = line[i] === "!" && i + 1 < n && line[i + 1] === "[";
+    const bracketIdx = isImg ? i + 1 : line[i] === "[" ? i : -1;
+    const m = bracketIdx !== -1 ? matchBracketParen(line, bracketIdx, n, closeBracketOf, closeParenOf) : null;
+    if (m && (isImg || m.cb > bracketIdx + 1)) {
+      const safeHref = sanitizeMarkdownUrl(line.slice(m.cb + 2, m.cp), opts);
+      if (isImg) {
+        const label = restore(esc(line.slice(i + 2, m.cb).trim() || "View image"));
+        out += stash(renderLinkElement(label, safeHref, opts.linkMode));
+      } else {
+        const img = i + 2 < m.cb && line[i + 1] === "!" && line[i + 2] === "["
+          ? matchBracketParen(line, i + 2, m.cb, closeBracketOf, closeParenOf) : null;
+        if (img && img.cp === m.cb - 1) {
+          const label = restore(esc(line.slice(i + 3, img.cb).trim() || "Badge"));
+          out += stash(renderLinkElement(label, safeHref, opts.linkMode));
+        } else {
+          const rawLabel = line.slice(i + 1, m.cb);
+          const flat = rawLabel.includes("[")
+            ? flattenLabelText(line, i + 1, m.cb, closeBracketOf, closeParenOf, stash, restore)
+            : rawLabel;
+          out += stash(renderLinkElement(restore(formatEmphasis(esc(flat))), safeHref, opts.linkMode));
+        }
+      }
+      i = m.cp + 1;
+    } else out += line[i++];
+  }
+  return out;
+}
+
+function trimTrailingUrlPunctuation(rawMatch) {
+  let openParens = 0;
+  let closeParens = 0;
+  for (let i = 0; i < rawMatch.length; i++) {
+    if (rawMatch[i] === "(") openParens++;
+    else if (rawMatch[i] === ")") closeParens++;
+  }
+  let end = rawMatch.length;
+  while (end > 0) {
+    const ch = rawMatch[end - 1];
+    if (ch === ")") {
+      if (openParens >= closeParens) break;
+      closeParens--;
+      end--;
+    } else if (".,;:!?".includes(ch)) end--;
+    else break;
+  }
+  return { url: rawMatch.slice(0, end), trailing: rawMatch.slice(end) };
 }
 
 function formatInline(rawLine, opts) {
   const tokens = [];
-  const stash = (html) => {
-    const idx = tokens.push(html) - 1;
-    return `\x00P${idx}\x00`;
-  };
+  const stash = (html) => `\x00P${tokens.push(html) - 1}\x00`;
   const restore = (text) => text.replace(TOKEN_RE, (_m, i) => tokens[Number(i)]);
 
-  let s = rawLine;
-
-  // 1. Protect inline code spans first so Markdown/HTML inside `...` stays literal
-  s = s.replace(/`([^`\n]+)`/g, (_m, code) => stash(`<code class="md-code">${esc(code)}</code>`));
-
-  // 2. Linked badge images [![alt](img)](href) -> host-safe clickable link
-  s = s.replace(
-    /\[!\[([^\]]*)\]\((?:[^()\s]+|\([^()\s]*\))+\)\]\(((?:[^()\s]+|\([^()\s]*\))+)\)/g,
-    (_m, alt, href) => {
-      const safeHref = sanitizeMarkdownUrl(href, opts);
-      const label = esc(alt.trim() || "Badge");
-      return stash(renderLinkElement(label, safeHref, opts.linkMode));
-    }
-  );
-
-  // 3. Standalone images ![alt](src) -> host-safe clickable link (avoids CSP-blocked images)
-  s = s.replace(/!\[([^\]]*)\]\(((?:[^()\s]+|\([^()\s]*\))+)\)/g, (_m, alt, src) => {
-    const safeHref = sanitizeMarkdownUrl(src, opts);
-    const label = esc(alt.trim() || "View image");
-    return stash(renderLinkElement(label, safeHref, opts.linkMode));
-  });
-
-  // 4. Standard links [label](href)
-  s = s.replace(/\[([^\]]+)\]\(((?:[^()\s]+|\([^()\s]*\))+)\)/g, (_m, label, href) => {
-    const safeHref = sanitizeMarkdownUrl(href, opts);
-    const labelHtml = restore(formatEmphasis(esc(label)));
-    return stash(renderLinkElement(labelHtml, safeHref, opts.linkMode));
-  });
-
-  // 5. Escape all remaining raw HTML before emphasis or bare URL auto-linking
+  let s = rawLine.replace(/`([^`\n]+)`/g, (_m, code) => stash(`<code class="md-code">${esc(code)}</code>`));
+  s = replaceMarkdownLinksAndImages(s, stash, opts, restore);
   s = formatEmphasis(esc(s));
-
-  // 6. Auto-link bare http(s):// URLs while preserving trailing punctuation and HTML entities
   s = s.replace(/https?:\/\/(?:[^\s<&]|&(?!(?:quot|#39|lt|gt);))+/g, (rawMatch) => {
-    let url = rawMatch;
-    let trailing = "";
-    while (/[.,;:!?)]$/.test(url)) {
-      if (url.endsWith(")") && (url.match(/\(/g) || []).length >= (url.match(/\)/g) || []).length) {
-        break;
-      }
-      trailing = url.slice(-1) + trailing;
-      url = url.slice(0, -1);
-    }
+    const { url, trailing } = trimTrailingUrlPunctuation(rawMatch);
     const decoded = url.replaceAll("&amp;", "&");
     const safeHref = sanitizeMarkdownUrl(decoded, opts);
-    if (!safeHref) return rawMatch;
-    return `${renderLinkElement(esc(decoded), safeHref, opts.linkMode)}${trailing}`;
+    return safeHref ? `${renderLinkElement(esc(decoded), safeHref, opts.linkMode)}${trailing}` : rawMatch;
   });
-
-  // 7. Restore stashed inline code & link tokens
   return restore(s);
 }
 
+function stripTrailingHeadingHashes(rawHeading) {
+  let end = rawHeading.length;
+  while (end > 0 && /\s/.test(rawHeading[end - 1])) end--;
+  while (end > 0 && rawHeading[end - 1] === "#") end--;
+  while (end > 0 && /\s/.test(rawHeading[end - 1])) end--;
+  return end > 0 ? rawHeading.slice(0, end) : rawHeading.trim();
+}
+
 function renderCodeFence(lang, lines) {
-  const langAttr = lang ? ` data-lang="${esc(lang)}"` : "";
-  return `<pre class="md-pre"><code${langAttr}>${esc(lines.join("\n"))}</code></pre>`;
+  return `<pre class="md-pre"><code${lang ? ` data-lang="${esc(lang)}"` : ""}>${esc(lines.join("\n"))}</code></pre>`;
 }
 
 /**
@@ -140,128 +217,67 @@ export function renderMarkdown(markdown, { linkMode = "anchor", repoUrl = "", sh
   if (linkMode !== "anchor" && linkMode !== "button") {
     throw new TypeError(`Invalid renderMarkdown linkMode: "${String(linkMode)}". Expected "anchor" or "button".`);
   }
-
   const input = String(markdown || "").replaceAll("\0", "").replace(/\r\n?/g, "\n");
   if (!input.trim()) return "";
 
   const opts = { linkMode, repoUrl, sha };
-  const lines = input.split("\n");
   const out = [];
-
-  let inFence = false;
-  let fenceLang = "";
-  let fenceLines = [];
-  let listType = null;
-  let listItems = [];
-  let quoteLines = [];
-  let paraLines = [];
+  let inFence = false, fenceLang = "", fenceLines = [];
+  let listType = null, listItems = [], quoteLines = [], paraLines = [];
 
   const flushPara = () => {
-    if (paraLines.length === 0) return;
+    if (!paraLines.length) return;
     out.push(`<p>${paraLines.map((l) => formatInline(l, opts)).join(" ")}</p>`);
     paraLines = [];
   };
-
   const flushList = () => {
-    if (!listType || listItems.length === 0) return;
-    const tag = listType;
-    out.push(
-      `<${tag} class="md-list">${listItems.map((item) => `<li>${formatInline(item, opts)}</li>`).join("")}</${tag}>`
-    );
-    listType = null;
-    listItems = [];
+    if (!listType || !listItems.length) return;
+    out.push(`<${listType} class="md-list">${listItems.map((item) => `<li>${formatInline(item, opts)}</li>`).join("")}</${listType}>`);
+    listType = null; listItems = [];
   };
-
   const flushQuote = () => {
-    if (quoteLines.length === 0) return;
+    if (!quoteLines.length) return;
     out.push(`<blockquote class="md-quote">${quoteLines.map((l) => formatInline(l, opts)).join("<br />")}</blockquote>`);
     quoteLines = [];
   };
-
-  const flushBlocks = () => {
-    flushPara();
-    flushList();
-    flushQuote();
+  const flushBlocks = () => { flushPara(); flushList(); flushQuote(); };
+  const pushList = (type, item) => {
+    flushPara(); flushQuote();
+    if (listType && listType !== type) flushList();
+    listType = type; listItems.push(item);
   };
 
-  for (const line of lines) {
-    const fenceMatch = line.match(/^\s*(?:```|~~~)\s*([A-Za-z0-9_+-]*)\s*$/);
+  for (const line of input.split("\n")) {
+    const trimmedLine = line.trim();
+    const fenceMatch = trimmedLine.match(/^(?:```|~~~)\s*([A-Za-z0-9_+-]*)$/);
     if (fenceMatch) {
-      if (inFence) {
-        out.push(renderCodeFence(fenceLang, fenceLines));
-        inFence = false;
-        fenceLang = "";
-        fenceLines = [];
-      } else {
-        flushBlocks();
-        inFence = true;
-        fenceLang = fenceMatch[1] || "";
-        fenceLines = [];
-      }
+      if (inFence) { out.push(renderCodeFence(fenceLang, fenceLines)); inFence = false; fenceLang = ""; fenceLines = []; }
+      else { flushBlocks(); inFence = true; fenceLang = fenceMatch[1] || ""; fenceLines = []; }
       continue;
     }
+    if (inFence) { fenceLines.push(line); continue; }
+    if (!trimmedLine) { flushBlocks(); continue; }
+    if (/^(?:-{3,}|\*{3,}|_{3,})$/.test(trimmedLine)) { flushBlocks(); out.push('<hr class="md-hr" />'); continue; }
 
-    if (inFence) {
-      fenceLines.push(line);
-      continue;
-    }
-
-    if (!line.trim()) {
-      flushBlocks();
-      continue;
-    }
-
-    if (/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
-      flushBlocks();
-      out.push('<hr class="md-hr" />');
-      continue;
-    }
-
-    const headingMatch = line.match(/^\s*(#{1,6})\s+(.+?)\s*#*$/);
+    const headingMatch = line.match(/^\s*(#{1,6})\s+(.+)$/);
     if (headingMatch) {
       flushBlocks();
       const level = Math.min(6, headingMatch[1].length);
-      out.push(`<h${level} class="md-h${level}">${formatInline(headingMatch[2], opts)}</h${level}>`);
+      out.push(`<h${level} class="md-h${level}">${formatInline(stripTrailingHeadingHashes(headingMatch[2]), opts)}</h${level}>`);
       continue;
     }
-
     const quoteMatch = line.match(/^\s*>\s?(.*)$/);
-    if (quoteMatch) {
-      flushPara();
-      flushList();
-      quoteLines.push(quoteMatch[1]);
-      continue;
-    }
-
+    if (quoteMatch) { flushPara(); flushList(); quoteLines.push(quoteMatch[1]); continue; }
     const ulMatch = line.match(/^\s*[-*+]\s+(.+)$/);
-    if (ulMatch) {
-      flushPara();
-      flushQuote();
-      if (listType && listType !== "ul") flushList();
-      listType = "ul";
-      listItems.push(ulMatch[1]);
-      continue;
-    }
-
+    if (ulMatch) { pushList("ul", ulMatch[1]); continue; }
     const olMatch = line.match(/^\s*\d+[.)]\s+(.+)$/);
-    if (olMatch) {
-      flushPara();
-      flushQuote();
-      if (listType && listType !== "ol") flushList();
-      listType = "ol";
-      listItems.push(olMatch[1]);
-      continue;
-    }
+    if (olMatch) { pushList("ol", olMatch[1]); continue; }
 
-    flushList();
-    flushQuote();
+    flushList(); flushQuote();
     paraLines.push(line.trim());
   }
 
-  if (inFence) {
-    out.push(renderCodeFence(fenceLang, fenceLines));
-  }
+  if (inFence) out.push(renderCodeFence(fenceLang, fenceLines));
   flushBlocks();
-
   return `<div class="md-body">${out.join("\n")}</div>`;
 }

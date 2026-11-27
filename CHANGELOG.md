@@ -2,6 +2,12 @@
 
 All notable changes to `antigravity-community-marketplace` will be documented in this file.
 
+## [1.0.4] - 2026-11-27
+
+### Improved
+- **Instant Plugin Details & README Rendering:** Renders large and badge-rich plugin READMEs smoothly and responsively inside the details drawer, including complex links and image badges.
+- **Snappy Drawer Navigation:** Keeps rapid plugin detail selections in sync so switching between plugins always displays the latest selected plugin information cleanly.
+
 ## [1.0.3] - 2026-11-27
 
 ### Improved

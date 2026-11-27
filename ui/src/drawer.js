@@ -92,8 +92,8 @@ function buildAuditBlocks({
           ${targetCaps.map((c) => `<span class="mp-badge" title="${esc(capDescription(c))}">${esc(capLabel(c))}</span>`).join("")}
         </div>
         <div class="mp-muted" style="font-size:11px">
-          Pinned Commit: <code>${esc(summary.release.sha.slice(0, 12))}</code> &middot;
-          Tree SHA-256: <code>${esc(summary.release.contentTreeSha256.slice(0, 12))}...</code>
+          Pinned Commit: <code>${esc((summary.release?.sha || "").slice(0, 12))}</code> &middot;
+          Tree SHA-256: <code>${esc((summary.release?.contentTreeSha256 || "").slice(0, 12))}...</code>
         </div>
       </section>
     `);
@@ -216,7 +216,7 @@ function buildAuditBlocks({
 function buildOverviewHtml(summary, detail) {
   const reportUrl =
     `${REGISTRY_ISSUE_REPO}/issues/new?title=${encodeURIComponent(`Report plugin: ${summary.id}`)}` +
-    `&body=${encodeURIComponent(`Plugin: ${summary.id}\nSHA: ${summary.release.sha}\nReason:\n`)}`;
+    `&body=${encodeURIComponent(`Plugin: ${summary.id}\nSHA: ${summary.release?.sha || ""}\nReason:\n`)}`;
   const mdOpts = {
     linkMode: "button",
     repoUrl: summary.repoUrl,
@@ -232,7 +232,7 @@ function buildOverviewHtml(summary, detail) {
   return `
     ${
       releaseNotesHtml
-        ? `<section class="mp-panel"><h3>Release Notes (${esc(summary.release.ref)})</h3>${releaseNotesHtml}</section>`
+        ? `<section class="mp-panel"><h3>Release Notes (${esc(summary.release?.ref || "release")})</h3>${releaseNotesHtml}</section>`
         : ""
     }
     <section class="mp-panel">
@@ -289,21 +289,27 @@ export function renderDrawer() {
     bodyHtml = `<p class="mp-muted">Fetching full security report and checking local collisions...</p>`;
   } else if (state.drawer.error) {
     bodyHtml = `<div class="mp-alert mp-alert-danger">${esc(state.drawer.error)}</div>`;
-  } else if (state.drawer.subTab === "audit") {
-    bodyHtml = buildAuditBlocks({
-      summary,
-      detail,
-      collisions,
-      preflight,
-      findings,
-      targetCaps,
-      targetInstall,
-      diff,
-      pending,
-      isAhead,
-    });
   } else {
-    bodyHtml = buildOverviewHtml(summary, detail);
+    try {
+      bodyHtml =
+        state.drawer.subTab === "audit"
+          ? buildAuditBlocks({
+              summary,
+              detail,
+              collisions,
+              preflight,
+              findings,
+              targetCaps,
+              targetInstall,
+              diff,
+              pending,
+              isAhead,
+            })
+          : buildOverviewHtml(summary, detail);
+    } catch (renderErr) {
+      console.error("[marketplace-drawer] Failed to render drawer body:", renderErr);
+      bodyHtml = `<div class="mp-alert mp-alert-danger">Failed to render drawer details: ${esc(renderErr?.message || String(renderErr))}</div>`;
+    }
   }
 
   // Footer Confirmation Actions

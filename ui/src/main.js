@@ -184,7 +184,10 @@ async function executeToggleEnabled(inst) {
   }
 }
 
+let drawerSeq = 0;
+
 async function openDrawer(pluginId, { subTab = "audit", pendingAction = null } = {}) {
+  const seq = ++drawerSeq;
   state.drawer = {
     open: true,
     pluginId,
@@ -206,17 +209,23 @@ async function openDrawer(pluginId, { subTab = "audit", pendingAction = null } =
       id: pluginId,
       workspaceRoot: state.activeProjectRoot || undefined,
     });
+    if (seq !== drawerSeq || !state.drawer.open) return;
     state.drawer.detail = res;
   } catch (err) {
-    state.drawer.error = err.message;
+    if (seq !== drawerSeq || !state.drawer.open) return;
+    state.drawer.error = err?.message || String(err);
   } finally {
-    state.drawer.loading = false;
-    renderDrawer();
+    if (seq === drawerSeq && state.drawer.open) {
+      state.drawer.loading = false;
+      renderDrawer();
+    }
   }
 }
 
 function closeDrawer() {
+  drawerSeq++;
   state.drawer.open = false;
+  state.drawer.loading = false;
   document.getElementById("drawer-backdrop").hidden = true;
   const drawerEl = document.getElementById("audit-drawer");
   drawerEl.classList.remove("is-open");

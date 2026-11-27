@@ -204,6 +204,87 @@ describe("renderMarkdown", () => {
     assert.throws(() => renderMarkdown("hi", { linkMode: "invalid" }), TypeError);
     assert.equal(renderMarkdown("   \n  "), "");
   });
+
+  it("handles empty-href linked badges and balanced parentheses in Wikipedia URLs", () => {
+    const md = [
+      "[![Zero Runtime Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)]()",
+      "[![Parens Badge](https://img.shields.io/badge/a_(b)-c-blue)](https://github.com/org/repo)",
+      "See [wiki](https://en.wikipedia.org/wiki/Foo_(bar)).",
+    ].join("\n\n");
+
+    const anchorHtml = renderMarkdown(md, { linkMode: "anchor" });
+    assert.equal(anchorHtml.includes("<img"), false);
+    assert.ok(anchorHtml.includes("<p>Zero Runtime Dependencies</p>"));
+    assert.ok(anchorHtml.includes('<a class="md-link" href="https://github.com/org/repo" target="_blank" rel="noopener noreferrer">Parens Badge</a>'));
+    assert.ok(anchorHtml.includes('<a class="md-link" href="https://en.wikipedia.org/wiki/Foo_(bar)" target="_blank" rel="noopener noreferrer">wiki</a>.'));
+
+    const btnHtml = renderMarkdown("[wiki](https://en.wikipedia.org/wiki/Foo_(bar))", { linkMode: "button" });
+    assert.ok(btnHtml.includes('<button type="button" class="md-link" data-open-url="https://en.wikipedia.org/wiki/Foo_(bar)" title="https://en.wikipedia.org/wiki/Foo_(bar)">wiki</button>'));
+  });
+
+  it("flattens compound nested images/links without nested interactive <button> or <a> elements", () => {
+    const md = "[prefix ![img](https://a.com/x.png)](https://b.com/y)";
+
+    const btnHtml = renderMarkdown(md, { linkMode: "button" });
+    assert.equal(btnHtml.includes("<img"), false);
+    assert.equal((btnHtml.match(/<button\b/g) || []).length, 1);
+    assert.equal((btnHtml.match(/<\/button>/g) || []).length, 1);
+    assert.ok(btnHtml.includes('<button type="button" class="md-link" data-open-url="https://b.com/y" title="https://b.com/y">prefix img</button>'));
+
+    const anchorHtml = renderMarkdown(md, { linkMode: "anchor" });
+    assert.equal((anchorHtml.match(/<a\b/g) || []).length, 1);
+    assert.equal((anchorHtml.match(/<\/a>/g) || []).length, 1);
+    assert.ok(anchorHtml.includes('<a class="md-link" href="https://b.com/y" target="_blank" rel="noopener noreferrer">prefix img</a>'));
+  });
+
+  it("restores inline code tokens and preserves emphasis inside image, badge, and flattened link labels", () => {
+    const cases = [
+      ["![alt `x`](https://a.com/x.png)", 'alt <code class="md-code">x</code>'],
+      ["[![alt `x`](https://a.com/x.png)](https://b.com/y)", 'alt <code class="md-code">x</code>'],
+      ["[**a** ![`code`](https://a.com/x.png)](https://b.com/y)", '<strong>a</strong> <code class="md-code">code</code>'],
+      ["[a [b `c`](https://a.com/x)](https://b.com/y)", 'a b <code class="md-code">c</code>'],
+      ["[a [**b**](https://a.com/x)](https://b.com/y)", "a <strong>b</strong>"],
+    ];
+    for (const [md, expectedInner] of cases) {
+      const html = renderMarkdown(md, { linkMode: "button" });
+      assert.equal(html.includes("\0"), false, `Unexpected NUL placeholder in: ${html}`);
+      assert.ok(html.includes(expectedInner), `Expected ${expectedInner} in ${html}`);
+    }
+  });
+
+  it("renders 10KB+ adversarial ReDoS inputs and 15KB badge-heavy READMEs in linear time (< 200ms)", () => {
+    const adversarial = [
+      `[a](https://example.com/${"(".repeat(5000)}${"x".repeat(5000)}`,
+      "[a](".repeat(3000),
+      "![alt](".repeat(3000),
+      `${"[".repeat(5000)}a${"](x)".repeat(5000)}`,
+      `${"**".repeat(5000)} and **unclosed ${"x*".repeat(5000)}`,
+      `${"https://".repeat(2000)} and https://example.com/${")".repeat(10000)}`,
+      `# a${" ".repeat(10000)}b`,
+      `\`\`\`${" ".repeat(50000)}!`,
+      `~~~${" ".repeat(50000)}!`,
+    ];
+    const t0 = performance.now();
+    for (const sample of adversarial) {
+      assert.ok(renderMarkdown(sample, { linkMode: "button" }).startsWith('<div class="md-body">'));
+    }
+    const elapsedMs = performance.now() - t0;
+    assert.ok(elapsedMs < 200, `Expected < 200ms for adversarial ReDoS suite, got ${elapsedMs.toFixed(2)}ms`);
+
+    const badgeLine =
+      "[![Zero Runtime Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)]() " +
+      "[![Build](https://img.shields.io/badge/build-passing-green)](https://github.com/Domush/antigravity-plugin-context-mode)";
+    const largeReadme = Array.from({ length: 65 }, (_, i) =>
+      `## Section ${i} **Summary**\n\n${badgeLine}\n\n- Uses [wiki](https://en.wikipedia.org/wiki/Foo_(bar)) and \`code\`\n`
+    ).join("\n");
+    assert.ok(largeReadme.length >= 15000);
+
+    const t1 = performance.now();
+    const readmeHtml = renderMarkdown(largeReadme, { linkMode: "button" });
+    const readmeMs = performance.now() - t1;
+    assert.ok(readmeHtml.includes("Zero Runtime Dependencies"));
+    assert.ok(readmeMs < 200, `Expected < 200ms for 15KB README, got ${readmeMs.toFixed(2)}ms`);
+  });
 });
 
 describe("accesses_gemini_dir capability metadata", () => {

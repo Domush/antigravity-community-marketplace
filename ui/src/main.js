@@ -11,7 +11,7 @@ import { populateCategoryDropdown, populateProjectSelector, render } from "./ren
 // ---------------------------------------------------------------------------
 // MCP App Host Bridge
 // ---------------------------------------------------------------------------
-const app = new App({ name: "Community Plugin Marketplace", version: "1.0.0" });
+const app = new App({ name: "Community Plugin Marketplace", version: "1.0.1" });
 
 function syncHostStyles(ctx) {
   if (!ctx) return;

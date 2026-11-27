@@ -2,6 +2,12 @@
 
 All notable changes to `antigravity-community-marketplace` will be documented in this file.
 
+## [1.0.1] - 2026-11-27
+
+### Added
+- **One-Command Installer & Setup:** Install and configure the Community Plugin Marketplace directly from your terminal with automated global or project-level setup and clean uninstallation support.
+- **Ready-to-Use Bundled Sidebar Interface:** Ships with a pre-built sidebar interface right out of the box for instant startup with no extra build steps required.
+
 ## [1.0.0] - 2026-11-27
 
 ### Added

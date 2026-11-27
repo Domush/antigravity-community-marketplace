@@ -1,11 +1,36 @@
 import crypto from "node:crypto";
+import { readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 
 const SOFT_TTL_MS = 5 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 15_000;
-const USER_AGENT = "agy-community-marketplace/1.0.0";
 const SIGNING_DOMAIN = "agy-registry-sig-v1";
+
+function loadUserAgent() {
+  const manifestUrl = new URL("../../plugin.json", import.meta.url);
+  let raw;
+  try {
+    raw = readFileSync(manifestUrl, "utf8");
+  } catch (err) {
+    throw new Error(`Failed to read plugin manifest at ${manifestUrl.href}: ${err.message}`);
+  }
+  let manifest;
+  try {
+    manifest = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`Failed to parse plugin manifest at ${manifestUrl.href}: ${err.message}`);
+  }
+  if (!manifest || typeof manifest.name !== "string" || !manifest.name.trim()) {
+    throw new Error(`Missing or invalid "name" in plugin manifest at ${manifestUrl.href}`);
+  }
+  if (typeof manifest.version !== "string" || !manifest.version.trim()) {
+    throw new Error(`Missing or invalid "version" in plugin manifest at ${manifestUrl.href}`);
+  }
+  return `${manifest.name.trim()}/${manifest.version.trim()}`;
+}
+
+export const USER_AGENT = loadUserAgent();
 
 /**
  * Pin one or more Ed25519 SPKI public keys keyed by 16-char hex SPKI SHA-256 fingerprint.

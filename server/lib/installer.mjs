@@ -7,6 +7,7 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import zlib from "node:zlib";
 import tar from "tar-stream";
+import { USER_AGENT } from "./catalog.mjs";
 
 const MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
 const MAX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024;
@@ -123,7 +124,7 @@ async function extractVerifiedTarball(tarballUrl, stageDir, expectedTreeSha256) 
   const timer = setTimeout(() => controller.abort(), TARBALL_FETCH_TIMEOUT_MS);
   try {
     const res = await fetch(tarballUrl, {
-      headers: { "User-Agent": "agy-community-marketplace/1.0.0" },
+      headers: { "User-Agent": USER_AGENT },
       redirect: "follow",
       signal: controller.signal,
     });

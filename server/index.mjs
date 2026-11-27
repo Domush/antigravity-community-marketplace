@@ -13,24 +13,55 @@ import {
   DEFAULT_TRUSTED_PUBLIC_KEYS,
   RegistryCatalog,
 } from "./lib/catalog.mjs";
+import { runCli } from "./lib/cli.mjs";
 import { runPreflightChecks } from "./lib/preflight.mjs";
 import { detectLiveCollisions, scanInstalledPlugins } from "./lib/scanner-local.mjs";
 import { PluginStore } from "./lib/store.mjs";
 import { registerMutatingTools, toolError } from "./tools-mutating.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT_DIR = path.resolve(__dirname, "..");
 const UI_RESOURCE_URI = "ui://marketplace/app.html";
 const UI_HTML_PATH = path.resolve(__dirname, "../ui/dist/marketplace.html");
 const CLIENT_MANIFEST_PATH = path.resolve(__dirname, "../plugin.json");
 
-const CLIENT_VERSION = await fs
-  .readFile(CLIENT_MANIFEST_PATH, "utf8")
-  .then((raw) => JSON.parse(raw).version || "1.0.0")
-  .catch(() => "1.0.0");
+const cliResult = runCli({ rootDir: ROOT_DIR });
+if (cliResult.handled) {
+  process.exit(cliResult.exitCode);
+}
+
+async function loadClientVersion(manifestPath) {
+  let raw;
+  try {
+    raw = await fs.readFile(manifestPath, "utf8");
+  } catch (err) {
+    throw new Error(`Failed to read plugin manifest at ${manifestPath}: ${err.message}`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`Failed to parse plugin manifest at ${manifestPath}: ${err.message}`);
+  }
+  if (!parsed || typeof parsed.version !== "string" || !parsed.version.trim()) {
+    throw new Error(`Missing or invalid "version" in plugin manifest at ${manifestPath}`);
+  }
+  return parsed.version.trim();
+}
+
+const CLIENT_VERSION = await loadClientVersion(CLIENT_MANIFEST_PATH);
 
 // ---------------------------------------------------------------------------
 // CLI Argument Parsing (--data-dir, --registry-url, --public-key-file, --insecure-skip-verify)
 // ---------------------------------------------------------------------------
+function requireFlagValue(argv, index, flagName) {
+  const val = argv[index + 1];
+  if (typeof val !== "string" || val.trim().length === 0 || val.startsWith("--")) {
+    throw new Error(`Missing required value for ${flagName}`);
+  }
+  return val;
+}
+
 function parseArgs(argv) {
   const opts = {
     dataDir: path.join(os.homedir(), ".gemini", "config", "plugin-data", "agy-community-marketplace"),
@@ -39,10 +70,21 @@ function parseArgs(argv) {
     insecureSkipVerify: false,
   };
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--data-dir" && argv[i + 1]) opts.dataDir = argv[++i];
-    else if (argv[i] === "--registry-url" && argv[i + 1]) opts.registryUrl = argv[++i];
-    else if (argv[i] === "--public-key-file" && argv[i + 1]) opts.publicKeyFile = argv[++i];
-    else if (argv[i] === "--insecure-skip-verify") opts.insecureSkipVerify = true;
+    const arg = argv[i];
+    if (arg === "--data-dir") {
+      opts.dataDir = requireFlagValue(argv, i, arg);
+      i += 1;
+    } else if (arg === "--registry-url") {
+      opts.registryUrl = requireFlagValue(argv, i, arg);
+      i += 1;
+    } else if (arg === "--public-key-file") {
+      opts.publicKeyFile = requireFlagValue(argv, i, arg);
+      i += 1;
+    } else if (arg === "--insecure-skip-verify") {
+      opts.insecureSkipVerify = true;
+    } else {
+      throw new Error(`Unknown MCP server argument: ${arg}`);
+    }
   }
   return opts;
 }
@@ -77,13 +119,18 @@ const catalog = new RegistryCatalog(OPTS.registryUrl, store, {
 
 const server = new McpServer({
   name: "community-marketplace",
-  version: "1.0.0",
+  version: CLIENT_VERSION,
 });
 
 // ---------------------------------------------------------------------------
 // Helpers: Workspace Roots & Summary Counts
 // ---------------------------------------------------------------------------
 async function discoverWorkspaceRoots() {
+  const clientCaps = server.server.getClientCapabilities();
+  if (!clientCaps?.roots) {
+    return [];
+  }
+
   const roots = [];
   try {
     const res = await server.server.listRoots();
@@ -92,8 +139,11 @@ async function discoverWorkspaceRoots() {
         roots.push(fileURLToPath(root.uri));
       }
     }
-  } catch {
-    // Client may not expose MCP roots when launched from project-agnostic global view
+  } catch (err) {
+    // JSON-RPC -32601 (Method not found) can occur if a client omits roots at runtime
+    if (err?.code !== -32601) {
+      console.error(`[marketplace-mcp] Failed to list MCP workspace roots: ${err?.message || err}`);
+    }
   }
   return [...new Set(roots)];
 }

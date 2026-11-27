@@ -1,6 +1,11 @@
 # Antigravity Community Plugin Marketplace
 
-Browse, security-audit, install, and update community-made Google Antigravity App plugins directly from the Antigravity sidebar—backed by a public, Ed25519-signed registry.
+> **Browse, security-audit, install, and update community-made Google Antigravity App plugins directly from the Antigravity sidebar—backed by a public, Ed25519-signed registry.**
+
+[![npm version](https://img.shields.io/npm/v/antigravity-community-marketplace.svg)](https://www.npmjs.com/package/antigravity-community-marketplace)
+[![Public Registry](https://img.shields.io/badge/Registry-domush.github.io-10b981?style=flat&logo=github)](https://domush.github.io/antigravity-plugin-registry/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Antigravity App Compatible](https://img.shields.io/badge/Antigravity%20App-Native%20Plugin-6366f1.svg)]()
 
 > **Disclaimer:** This is an independent community project and is not affiliated with or endorsed by Google. Always review audit findings before installing elevated or high-risk plugins.
 
@@ -13,15 +18,31 @@ Browse, security-audit, install, and update community-made Google Antigravity Ap
 
 ---
 
-## Installation
+## Quick Install (10 Seconds)
 
-### Option 1: Antigravity CLI (Recommended)
+Install directly into Google Antigravity using `npx`:
 
 ```bash
-agy plugin install https://github.com/Domush/antigravity-community-marketplace
+# Global install (available across all Antigravity workspaces)
+npx antigravity-community-marketplace install
+
+# Or per-project install (scoped to the current workspace only)
+npx antigravity-community-marketplace install --workspace
 ```
 
-### Option 2: Manual Install
+Restart or reload the **Google Antigravity App**, and **Community Plugins** appears immediately in your sidebar (installed into `~/.gemini/config/plugins/agy-community-marketplace`, or `.agents/plugins/agy-community-marketplace` for workspace installs).
+
+### Uninstall
+
+```bash
+# Remove global install
+npx antigravity-community-marketplace uninstall
+
+# Or remove per-project workspace install
+npx antigravity-community-marketplace uninstall --workspace
+```
+
+### Manual Install
 
 1. Download and extract the latest release archive into your global plugins folder:
    * **macOS / Linux:** `~/.gemini/config/plugins/agy-community-marketplace/`

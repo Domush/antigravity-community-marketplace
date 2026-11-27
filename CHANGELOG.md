@@ -2,6 +2,11 @@
 
 All notable changes to `antigravity-community-marketplace` will be documented in this file.
 
+## [1.0.7] - 2026-11-27
+
+### Added
+- **Automated Release Publishing:** Added automated GitHub Release creation with changelog release notes alongside npm package publishing for tagged releases.
+
 ## [1.0.6] - 2026-11-27
 
 ### Improved

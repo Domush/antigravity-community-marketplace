@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" fill="none">
+  <defs>
+    <linearGradient id="mp-logo-grad" x1="2" y1="2" x2="30" y2="30" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#3b82f6" />
+      <stop offset="55%" stop-color="#6366f1" />
+      <stop offset="100%" stop-color="#8b5cf6" />
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="28" height="28" rx="7.5" fill="url(#mp-logo-grad)" />
+  <rect x="7" y="7.5" width="7.5" height="7.5" rx="2" fill="#ffffff" />
+  <rect x="7" y="17.5" width="7.5" height="7.5" rx="2" fill="#ffffff" fill-opacity="0.88" />
+  <rect x="17" y="17.5" width="7.5" height="7.5" rx="2" fill="#ffffff" fill-opacity="0.88" />
+  <path d="M21 6.2L22.35 9.15L25.3 10.5L22.35 11.85L21 14.8L19.65 11.85L16.7 10.5L19.65 9.15L21 6.2Z" fill="#fde68a" />
+</svg>

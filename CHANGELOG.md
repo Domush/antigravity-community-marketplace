@@ -2,6 +2,12 @@
 
 All notable changes to `antigravity-community-marketplace` will be documented in this file.
 
+## [1.0.6] - 2026-11-27
+
+### Improved
+- **Streamlined Plugin Card & Header UI:** Added a custom marketplace icon and refined sidebar header, simplified upgrade buttons to `Update`, combined install/disable/uninstall actions into a contextual split button with bright `Install` and `Details` styling, replaced `Hide` with an eye icon aligned beside a larger star icon, and hid the project selector pill by default.
+- **Cleaner Catalog & Installed Views:** Excluded the marketplace plugin itself from browsable and installed plugin listings so updates are handled exclusively through the dedicated marketplace update banner.
+
 ## [1.0.5] - 2026-11-27
 
 ### Improved

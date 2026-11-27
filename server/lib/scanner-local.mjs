@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { computeContentTreeSha256, getPluginsDir } from "./installer.mjs";
+import { isSelfMarketplacePlugin } from "./self-filter.mjs";
 
 const HOOK_EVENTS = new Set([
   "SessionStart",
@@ -245,6 +246,15 @@ async function scanScopeDirectory(rootDir, scope, lockByPath, { enabled, catalog
 
     const normalizedPath = path.resolve(pluginDir).toLowerCase();
     const lockRecord = lockByPath.get(normalizedPath) || null;
+    if (
+      isSelfMarketplacePlugin({
+        id: lockRecord?.id || manifest.name || entry.name,
+        slug: entry.name,
+        name: manifest.name,
+      })
+    ) {
+      continue;
+    }
     const surfaces = await inspectLocalSurfaces(pluginDir, manifest);
 
     const record = {

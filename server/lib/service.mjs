@@ -18,6 +18,7 @@ import {
 } from "./installer.mjs";
 import { runPreflightChecks } from "./preflight.mjs";
 import { detectLiveCollisions, scanInstalledPlugins } from "./scanner-local.mjs";
+import { filterSelfFromCatalogIndex, isSelfMarketplacePlugin } from "./self-filter.mjs";
 import { compareSemver, parseSemver } from "./semver.mjs";
 import { PluginStore } from "./store.mjs";
 
@@ -176,7 +177,8 @@ export function createCatalogAndStore({
 }
 
 export function summarizeStatus(index, denylist, installed) {
-  const pluginById = new Map((index.plugins || []).map((p) => [p.id.toLowerCase(), p]));
+  const visiblePlugins = (index.plugins || []).filter((p) => !isSelfMarketplacePlugin(p));
+  const pluginById = new Map(visiblePlugins.map((p) => [p.id.toLowerCase(), p]));
   const blockedRepos = new Set((denylist.blockedRepos || []).map((b) => b.id.toLowerCase()));
   const blockedShas = new Set(
     (denylist.blockedShas || []).map((b) => `${b.id.toLowerCase()}@${b.sha.toLowerCase()}`)
@@ -186,6 +188,7 @@ export function summarizeStatus(index, denylist, installed) {
   let revoked = 0;
 
   for (const inst of installed) {
+    if (isSelfMarketplacePlugin(inst)) continue;
     const idKey = (inst.id || "").toLowerCase();
     if (blockedRepos.has(idKey) || (inst.sha && blockedShas.has(`${idKey}@${inst.sha.toLowerCase()}`))) {
       revoked += 1;
@@ -209,8 +212,8 @@ export function summarizeStatus(index, denylist, installed) {
   }
 
   return {
-    total: (index.plugins || []).length,
-    installed: installed.length,
+    total: visiblePlugins.length,
+    installed: installed.filter((inst) => !isSelfMarketplacePlugin(inst)).length,
     updates,
     revoked,
   };
@@ -247,11 +250,12 @@ export function createMarketplaceService({
   }
 
   async function getSummary({ initialQuery = "", tab = "browse" } = {}) {
-    const [index, denylist, workspaceRoots] = await Promise.all([
+    const [rawIndex, denylist, workspaceRoots] = await Promise.all([
       catalog.getIndex({ force: false }),
       catalog.getDenylist({ force: false }),
       resolveRoots(),
     ]);
+    const index = filterSelfFromCatalogIndex(rawIndex);
     const installed = await scanInstalledPlugins({
       store,
       workspaceRoot: workspaceRoots[0],
@@ -268,13 +272,14 @@ export function createMarketplaceService({
   }
 
   async function getBootstrap({ workspaceRoot, workspaceRoots } = {}) {
-    const [index, denylist, prefs, resolvedRoots] = await Promise.all([
+    const [rawIndex, denylist, prefs, resolvedRoots] = await Promise.all([
       catalog.getIndex({ force: false }),
       catalog.getDenylist({ force: false }),
       store.getPrefs(),
       resolveRoots(workspaceRoots),
     ]);
 
+    const index = filterSelfFromCatalogIndex(rawIndex);
     const activeRoot = workspaceRoot || resolvedRoots[0];
     const installed = await scanInstalledPlugins({
       store,
@@ -297,11 +302,12 @@ export function createMarketplaceService({
   }
 
   async function checkUpdates({ workspaceRoot, workspaceRoots } = {}) {
-    const [index, denylist, resolvedRoots] = await Promise.all([
+    const [rawIndex, denylist, resolvedRoots] = await Promise.all([
       catalog.getIndex({ force: true }),
       catalog.getDenylist({ force: true }),
       resolveRoots(workspaceRoots),
     ]);
+    const index = filterSelfFromCatalogIndex(rawIndex);
     const installed = await scanInstalledPlugins({
       store,
       workspaceRoot: workspaceRoot || resolvedRoots[0],
@@ -319,7 +325,7 @@ export function createMarketplaceService({
   }
 
   async function getPluginDetail({ id, workspaceRoot, workspaceRoots } = {}) {
-    const index = await catalog.getIndex({ force: false });
+    const index = filterSelfFromCatalogIndex(await catalog.getIndex({ force: false }));
     const pluginEntry = (index.plugins || []).find(
       (p) => p.id.toLowerCase() === id.toLowerCase()
     );
@@ -354,10 +360,11 @@ export function createMarketplaceService({
 
   async function installPlugin({ id, scope, workspaceRoot, replaceSlug, replaceEnabled = true }) {
     // Always revalidate denylist before installing so emergency revocations take effect immediately
-    const [index, denylist] = await Promise.all([
+    const [rawIndex, denylist] = await Promise.all([
       catalog.getIndex({ force: false }),
       catalog.getDenylist({ force: true }),
     ]);
+    const index = filterSelfFromCatalogIndex(rawIndex);
     const pluginEntry = (index.plugins || []).find(
       (p) => p.id.toLowerCase() === id.toLowerCase()
     );

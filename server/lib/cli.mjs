@@ -413,6 +413,10 @@ export function runCli({
     for (const file of REQUIRED_FILES) {
       copyFileSafely(path.join(rootDir, file), path.join(targetDir, file));
     }
+    const optionalIconPath = path.join(rootDir, "icon.svg");
+    if (fs.existsSync(optionalIconPath)) {
+      copyFileSafely(optionalIconPath, path.join(targetDir, "icon.svg"));
+    }
     for (const dir of REQUIRED_DIRS) {
       const destDir = path.join(targetDir, dir);
       syncPluginDirectory(path.join(rootDir, dir), destDir);

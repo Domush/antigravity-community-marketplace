@@ -136,7 +136,7 @@ export async function dispatchSidecarTool({ service, name, arguments: rawArgs })
 export function createStandaloneServer({
   service,
   htmlPath = DEFAULT_HTML_PATH,
-  clientVersion = "1.0.5",
+  clientVersion = "1.0.6",
   port = 0,
   host = "127.0.0.1",
 }) {

@@ -1,3 +1,4 @@
+import { isSelfMarketplacePlugin } from "../../server/lib/self-filter.mjs";
 import { compareSemver, parseSemver } from "../../server/lib/semver.mjs";
 import { ELEVATED_CAPABILITIES, RISK_ORDER } from "./security-meta.js";
 
@@ -27,12 +28,13 @@ export const state = {
   installed: [], // [{ id, slug, scope: 'global'|'project', version, sha, capabilities, manual }]
   workspaceRoots: [],
   activeProjectRoot: "",
-  clientVersion: "1.0.5",
+  clientVersion: "1.0.6",
   platform: "",
   dismissedSelfUpdate: false,
   requiresReload: false,
   busyIds: new Set(),
   expandedIds: new Set(),
+  openActionMenuId: null,
   errorMessage: "",
 
   // View controls
@@ -218,7 +220,7 @@ export function getInstallActionMeta(install, plugin) {
     };
   }
 
-  const prefix = status.isRepoOrigin ? "Adopt & Update" : "Update";
+  const prefix = "Update";
   const label = instLabel
     ? `${prefix} ${instLabel} \u2192 ${regLabel}`
     : status.isRepoOrigin
@@ -278,10 +280,11 @@ export function getFilteredPlugins() {
   const q = state.query.trim().toLowerCase();
 
   // Merge catalog plugins + any locally installed manual plugins when viewing Installed tab
-  let items = [...(state.catalog.plugins || [])];
+  let items = (state.catalog.plugins || []).filter((p) => !isSelfMarketplacePlugin(p));
   if (state.tab === "installed") {
     const knownIds = new Set(items.map((p) => p.id.toLowerCase()));
     for (const inst of state.installed) {
+      if (isSelfMarketplacePlugin(inst)) continue;
       const idKey = (inst.id || inst.slug).toLowerCase();
       if (!knownIds.has(idKey)) {
         items.push({

@@ -68,6 +68,9 @@
 }
 
 .mp-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--mp-radius-sm);
@@ -84,6 +87,108 @@
 
 .mp-icon-btn.is-active {
   color: var(--mp-elevated-fg);
+}
+
+.mp-eye-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+
+.mp-fav-btn {
+  width: 30px;
+  height: 28px;
+  padding: 0;
+}
+
+.mp-fav-btn svg {
+  display: block;
+  transform: translateY(-1px);
+}
+
+.mp-btn-install {
+  background: color-mix(in srgb, var(--mp-accent) 90%, transparent);
+  border-color: color-mix(in srgb, var(--mp-accent) 90%, transparent);
+  color: var(--primary-foreground, #ffffff);
+}
+
+.mp-btn-install:hover:not(:disabled) {
+  background: var(--mp-accent);
+  border-color: var(--mp-accent);
+}
+
+.mp-btn-details {
+  font-weight: 600;
+  color: #ffffff;
+  background: color-mix(in srgb, #6366f1 90%, transparent);
+  border-color: color-mix(in srgb, #6366f1 90%, transparent);
+  padding: 5px 12px;
+}
+
+.mp-btn-details:hover:not(:disabled) {
+  background: #6366f1;
+  border-color: #6366f1;
+  filter: brightness(1.06);
+}
+
+.mp-split-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.mp-split-main {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.mp-split-toggle {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: none;
+  padding: 5px 7px;
+  font-size: 11px;
+}
+
+.mp-split-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 25;
+  min-width: 185px;
+  max-width: calc(100vw - 36px);
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--mp-surface);
+  border: 1px solid var(--mp-border);
+  border-radius: var(--mp-radius-sm);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
+}
+
+.mp-split-item {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: var(--mp-radius-sm);
+  padding: 6px 9px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--mp-text);
+  cursor: pointer;
+}
+
+.mp-split-item:hover:not(:disabled) {
+  background: var(--mp-surface-hover);
+}
+
+.mp-split-item.is-danger {
+  color: var(--mp-high-fg);
+}
+
+.mp-split-item.is-danger:hover:not(:disabled) {
+  background: var(--mp-high-bg);
 }
 
 /* Aux Pane & Compact Sidebar Widths (~340px - 520px) */
@@ -273,20 +378,21 @@
   }
 
   .mp-header-top {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 5px;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
   }
 
   .mp-title-group {
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 4px 8px;
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
   .mp-header-actions {
-    width: 100%;
-    justify-content: space-between;
+    width: auto;
+    justify-content: flex-end;
   }
 
   .mp-project-pill {

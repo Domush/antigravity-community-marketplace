@@ -380,8 +380,16 @@ function bindEvents() {
   });
 
   document.getElementById("plugin-grid").addEventListener("click", (e) => {
-    const el = e.target.closest("[data-open-drawer], [data-toggle-desc], [data-pref], [data-action]");
+    const el = e.target.closest("[data-open-drawer], [data-toggle-desc], [data-pref], [data-toggle-menu], [data-action]");
     if (!el) return;
+
+    if (el.dataset.toggleMenu) {
+      e.stopPropagation();
+      const menuId = el.dataset.toggleMenu;
+      state.openActionMenuId = state.openActionMenuId === menuId ? null : menuId;
+      render();
+      return;
+    }
 
     if (el.dataset.toggleDesc) {
       const id = el.dataset.toggleDesc;
@@ -392,6 +400,7 @@ function bindEvents() {
     }
 
     if (el.dataset.openDrawer) {
+      state.openActionMenuId = null;
       const subTab = el.dataset.drawerTab === "overview" ? "overview" : "audit";
       openDrawer(el.dataset.openDrawer, { subTab });
       return;
@@ -402,6 +411,7 @@ function bindEvents() {
       return;
     }
 
+    state.openActionMenuId = null;
     const action = el.dataset.action;
     const id = el.dataset.id;
     const scope = el.dataset.scope;
@@ -454,8 +464,22 @@ function bindEvents() {
     }
   });
 
+  document.addEventListener("click", (e) => {
+    if (state.openActionMenuId && !e.target.closest("[data-split-root]")) {
+      state.openActionMenuId = null;
+      render();
+    }
+  });
+
   window.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && state.drawer.open) closeDrawer();
+    if (e.key === "Escape") {
+      if (state.openActionMenuId) {
+        state.openActionMenuId = null;
+        render();
+      } else if (state.drawer.open) {
+        closeDrawer();
+      }
+    }
   });
 }
 

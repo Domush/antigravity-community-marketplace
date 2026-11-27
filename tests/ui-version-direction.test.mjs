@@ -97,7 +97,7 @@ describe("UI install version direction and action metadata", () => {
     assert.equal(adoptMeta.direction, "upgrade");
     assert.equal(adoptMeta.isAhead, false);
     assert.equal(adoptMeta.action, "review-adopt");
-    assert.equal(adoptMeta.label, "Adopt & Update 1.1.1 → 1.1.2");
+    assert.equal(adoptMeta.label, "Update 1.1.1 → 1.1.2");
     assert.equal(adoptMeta.isPrimary, true);
 
     state.installed = [managedInstall];
@@ -199,7 +199,7 @@ describe("UI install version direction and action metadata", () => {
     assert.equal(repoMeta.isAhead, false);
     assert.equal(repoMeta.action, "review-adopt");
     assert.equal(repoMeta.isPrimary, true);
-    assert.equal(repoMeta.label, "Adopt & Update local → 1.1.1");
+    assert.equal(repoMeta.label, "Update local → 1.1.1");
 
     state.installed = [managedLocal];
     assert.equal(hasUpdateAvailable(plugin), true);

@@ -1,26 +1,33 @@
 @import "./drawer.css";
+@import "./sidebar.css";
 
 :root {
   color-scheme: light dark;
 
-  /* Map MCP Apps host tokens with resilient light-dark() fallbacks */
-  --mp-bg: var(--color-background-primary, light-dark(#ffffff, #141518));
-  --mp-surface: var(--color-background-secondary, light-dark(#f6f7f9, #1d1f24));
-  --mp-surface-hover: var(--color-background-tertiary, light-dark(#eceff3, #262930));
-  --mp-text: var(--color-text-primary, light-dark(#15171a, #eceff4));
-  --mp-text-muted: var(--color-text-secondary, light-dark(#59616e, #9ba3b0));
-  --mp-border: var(--color-border-primary, light-dark(#dcdfe6, #2f333d));
-  --mp-ring: var(--color-ring-primary, light-dark(#2563eb, #60a5fa));
-  --mp-accent: var(--color-text-info, light-dark(#2563eb, #60a5fa));
-  --mp-accent-bg: var(--color-background-info, light-dark(#eff6ff, #172554));
+  /* Map MCP Apps host tokens with Antigravity sidecar & light-dark() fallbacks */
+  --mp-bg: var(--color-background-primary, var(--background, light-dark(#ffffff, #141518)));
+  --mp-surface: var(--color-background-secondary, var(--card, light-dark(#f6f7f9, #1d1f24)));
+  --mp-surface-hover: var(--color-background-tertiary, var(--muted, light-dark(#eceff3, #262930)));
+  --mp-text: var(--color-text-primary, var(--foreground, light-dark(#15171a, #eceff4)));
+  --mp-text-muted: var(--color-text-secondary, var(--muted-foreground, light-dark(#59616e, #9ba3b0)));
+  --mp-border: var(--color-border-primary, var(--border, light-dark(#dcdfe6, #2f333d)));
+  --mp-ring: var(--color-ring-primary, var(--ring, light-dark(#2563eb, #60a5fa)));
+  --mp-accent: var(--color-text-info, var(--primary, light-dark(#2563eb, #60a5fa)));
+  --mp-accent-bg: var(
+    --color-background-info,
+    color-mix(in srgb, var(--primary, light-dark(#2563eb, #60a5fa)) 14%, transparent)
+  );
 
   /* Semantic risk/status tokens */
   --mp-low-fg: var(--color-text-success, light-dark(#166534, #86efac));
   --mp-low-bg: var(--color-background-success, light-dark(#dcfce7, #14532d66));
   --mp-elevated-fg: var(--color-text-warning, light-dark(#92400e, #fcd34d));
   --mp-elevated-bg: var(--color-background-warning, light-dark(#fef3c7, #78350f66));
-  --mp-high-fg: var(--color-text-danger, light-dark(#991b1b, #fca5a5));
-  --mp-high-bg: var(--color-background-danger, light-dark(#fee2e2, #7f1d1d66));
+  --mp-high-fg: var(--color-text-danger, var(--destructive, light-dark(#991b1b, #fca5a5)));
+  --mp-high-bg: var(
+    --color-background-danger,
+    color-mix(in srgb, var(--destructive, light-dark(#991b1b, #fca5a5)) 14%, transparent)
+  );
 
   --mp-font: var(--font-sans, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
   --mp-mono: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
@@ -281,7 +288,7 @@ select:focus-visible {
 /* Card Grid (scales cleanly from narrow aux_pane to full-width global view) */
 .mp-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
   gap: 12px;
   padding: 16px;
 }
@@ -402,85 +409,5 @@ select:focus-visible {
   color: var(--mp-accent);
   background: var(--mp-accent-bg);
   border-color: transparent;
-}
-
-/* Buttons */
-.mp-card-footer {
-  margin-top: auto;
-  padding-top: 8px;
-  border-top: 1px solid var(--mp-border);
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-}
-
-.mp-btn-group {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.mp-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 5px 10px;
-  border-radius: var(--mp-radius-sm);
-  border: 1px solid var(--mp-border);
-  background: var(--mp-bg);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.mp-btn:hover:not(:disabled) {
-  background: var(--mp-surface-hover);
-}
-
-.mp-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.mp-btn-primary {
-  background: var(--mp-accent);
-  border-color: var(--mp-accent);
-  color: #ffffff;
-}
-
-.mp-btn-primary:hover:not(:disabled) {
-  filter: brightness(1.08);
-  background: var(--mp-accent);
-}
-
-.mp-btn-danger {
-  color: var(--mp-high-fg);
-  border-color: color-mix(in srgb, var(--mp-high-fg) 40%, var(--mp-border));
-}
-
-.mp-btn-danger:hover:not(:disabled) {
-  background: var(--mp-high-bg);
-}
-
-.mp-icon-btn {
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--mp-radius-sm);
-  padding: 3px 6px;
-  font-size: 12px;
-  cursor: pointer;
-  color: var(--mp-text-muted);
-}
-
-.mp-icon-btn:hover {
-  background: var(--mp-surface-hover);
-  color: var(--mp-text);
-}
-
-.mp-icon-btn.is-active {
-  color: var(--mp-elevated-fg);
 }
 

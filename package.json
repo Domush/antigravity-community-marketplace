@@ -1,7 +1,7 @@
 {
   "name": "antigravity-community-marketplace",
   "displayName": "Community Plugin Marketplace: A plugin for Google Antigravity App",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Browse, audit, install, and update community-made Antigravity App plugins.",
   "type": "module",
   "license": "MIT",
@@ -43,6 +43,7 @@
     "plugin.json",
     "mcp_config.json",
     "server/",
+    "sidecars/",
     "ui/dist/marketplace.html",
     "README.md",
     "LICENSE",

@@ -1,58 +1,49 @@
-import {
-  App,
-  applyDocumentTheme,
-  applyHostFonts,
-  applyHostStyleVariables,
-} from "@modelcontextprotocol/ext-apps";
+import { createHostBridge } from "./bridge.js";
 import { renderDrawer } from "./drawer.js";
 import { state } from "./helpers.js";
 import { populateCategoryDropdown, populateProjectSelector, render } from "./render.js";
 
 // ---------------------------------------------------------------------------
-// MCP App Host Bridge
+// Dual-Mode Host Bridge (Antigravity Sidecar / HTTP vs MCP App)
 // ---------------------------------------------------------------------------
-const app = new App({ name: "Community Plugin Marketplace", version: "1.0.1" });
+const bridge = createHostBridge({
+  clientVersion: state.clientVersion,
+  onToolResult(result) {
+    const sc = result?.structuredContent;
+    if (!sc) return;
+    if (typeof sc.initialQuery === "string" && sc.initialQuery.trim()) {
+      state.query = sc.initialQuery.trim();
+      document.getElementById("search-input").value = state.query;
+    }
+    if (["browse", "installed", "updates", "favorites"].includes(sc.tab)) {
+      state.tab = sc.tab;
+    }
+    render();
+  },
+  onWorkspaceChange() {
+    const prevRoots = [...state.workspaceRoots];
+    if (!state.activeProjectRoot || prevRoots.includes(state.activeProjectRoot)) {
+      state.activeProjectRoot = "";
+    }
+    void loadBootstrap(false);
+  },
+});
 
-function syncHostStyles(ctx) {
-  if (!ctx) return;
-  if (ctx.theme) applyDocumentTheme(ctx.theme);
-  if (ctx.styles?.variables) applyHostStyleVariables(ctx.styles.variables);
-  if (ctx.styles?.css?.fonts) applyHostFonts(ctx.styles.css.fonts);
-}
-
-app.onhostcontextchanged = syncHostStyles;
-
-// Capture initial arguments passed to open_marketplace({ initialQuery, tab })
-app.ontoolresult = (result) => {
-  const sc = result?.structuredContent;
-  if (!sc) return;
-  if (typeof sc.initialQuery === "string" && sc.initialQuery.trim()) {
-    state.query = sc.initialQuery.trim();
-    document.getElementById("search-input").value = state.query;
-  }
-  if (["browse", "installed", "updates", "favorites"].includes(sc.tab)) {
-    state.tab = sc.tab;
-  }
-  render();
-};
-
-async function callServerTool(name, args = {}) {
-  const res = await app.callServerTool({ name, arguments: args });
-  if (res.isError) {
-    throw new Error(res.content?.[0]?.text || `Server tool "${name}" failed.`);
-  }
-  return res.structuredContent || {};
+function callServerTool(name, args = {}) {
+  return bridge.callTool(name, args);
 }
 
 function openExternal(url) {
-  if (!url) return;
-  app.openLink({ url });
+  bridge.openExternal(url);
 }
 
 // ---------------------------------------------------------------------------
 // Data Loading & Actions
 // ---------------------------------------------------------------------------
+let bootstrapSeq = 0;
+
 async function loadBootstrap(forceCheck = false) {
+  const seq = ++bootstrapSeq;
   const refreshBtn = document.getElementById("btn-refresh");
   refreshBtn.disabled = true;
   refreshBtn.textContent = "Syncing...";
@@ -65,6 +56,8 @@ async function loadBootstrap(forceCheck = false) {
     const data = await callServerTool("mp_get_bootstrap", {
       workspaceRoot: state.activeProjectRoot || undefined,
     });
+
+    if (seq !== bootstrapSeq) return;
 
     state.catalog = data.index || { plugins: [] };
     state.denylist = data.denylist || { blockedRepos: [], blockedShas: [] };
@@ -81,11 +74,14 @@ async function loadBootstrap(forceCheck = false) {
     populateCategoryDropdown();
     populateProjectSelector();
   } catch (err) {
+    if (seq !== bootstrapSeq) return;
     state.errorMessage = err.message;
   } finally {
-    refreshBtn.disabled = false;
-    refreshBtn.textContent = "Check Updates";
-    render();
+    if (seq === bootstrapSeq) {
+      refreshBtn.disabled = false;
+      refreshBtn.textContent = "Check Updates";
+      render();
+    }
   }
 }
 
@@ -271,12 +267,43 @@ function bindEvents() {
     loadBootstrap(false);
   });
 
-  document.getElementById("btn-custom-project").addEventListener("click", () => {
-    const next = window.prompt("Enter absolute path to your project workspace:", state.activeProjectRoot);
-    if (next && next.trim()) {
-      state.activeProjectRoot = next.trim();
+  const projectPill = document.getElementById("project-pill");
+  const projectEditor = document.getElementById("custom-project-editor");
+  const projectInput = document.getElementById("custom-project-input");
+
+  function openProjectEditor() {
+    projectPill.hidden = true;
+    projectEditor.hidden = false;
+    projectInput.value = state.activeProjectRoot || "";
+    projectInput.focus();
+    projectInput.select();
+  }
+
+  function closeProjectEditor() {
+    projectEditor.hidden = true;
+    projectPill.hidden = false;
+  }
+
+  function applyCustomProject() {
+    const next = projectInput.value.trim();
+    closeProjectEditor();
+    if (next) {
+      state.activeProjectRoot = next;
       populateProjectSelector();
       loadBootstrap(false);
+    }
+  }
+
+  document.getElementById("btn-custom-project").addEventListener("click", openProjectEditor);
+  document.getElementById("btn-save-project").addEventListener("click", applyCustomProject);
+  document.getElementById("btn-cancel-project").addEventListener("click", closeProjectEditor);
+  projectInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      applyCustomProject();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      closeProjectEditor();
     }
   });
 
@@ -388,12 +415,11 @@ function bindEvents() {
 // ---------------------------------------------------------------------------
 async function boot() {
   bindEvents();
-  await app.connect();
-  syncHostStyles(app.getHostContext());
+  await bridge.connect();
   await loadBootstrap(false);
 }
 
 boot().catch((err) => {
-  state.errorMessage = `Failed to connect to marketplace MCP server: ${err.message}`;
+  state.errorMessage = `Failed to connect to marketplace backend: ${err.message}`;
   render();
 });

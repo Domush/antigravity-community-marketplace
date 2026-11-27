@@ -13,7 +13,10 @@ import {
   runCli,
 } from "../server/lib/cli.mjs";
 
-function createFakeBundle(bundleDir, { version = "1.0.0", includeUiBundle = true } = {}) {
+function createFakeBundle(
+  bundleDir,
+  { version = "1.0.2", includeUiBundle = true, includeSidecars = true } = {}
+) {
   fs.mkdirSync(bundleDir, { recursive: true });
   for (const file of REQUIRED_FILES) {
     const content =
@@ -22,15 +25,24 @@ function createFakeBundle(bundleDir, { version = "1.0.0", includeUiBundle = true
         : `content:${file}`;
     fs.writeFileSync(path.join(bundleDir, file), content, "utf8");
   }
-  for (const dir of REQUIRED_DIRS) {
-    const subDir = path.join(bundleDir, dir);
-    fs.mkdirSync(subDir, { recursive: true });
-    fs.writeFileSync(path.join(subDir, "index.mjs"), "// server entry\n", "utf8");
+  const serverDir = path.join(bundleDir, "server");
+  fs.mkdirSync(serverDir, { recursive: true });
+  fs.writeFileSync(path.join(serverDir, "index.mjs"), "// server entry\n", "utf8");
+
+  if (includeSidecars) {
+    const sidecarDir = path.join(bundleDir, "sidecars", "marketplace");
+    fs.mkdirSync(sidecarDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sidecarDir, "sidecar.json"),
+      JSON.stringify({ command: "node", args: ["server.mjs"], has_web_ui: true }),
+      "utf8"
+    );
+    fs.writeFileSync(path.join(sidecarDir, "server.mjs"), "// sidecar server\n", "utf8");
   }
   if (includeUiBundle) {
     const uiDistDir = path.join(bundleDir, "ui", "dist");
     fs.mkdirSync(uiDistDir, { recursive: true });
-    fs.writeFileSync(path.join(uiDistDir, "marketplace.html"), "<html><body>Marketplace</body></html>", "utf8");
+    fs.writeFileSync(path.join(uiDistDir, "marketplace.html"), "<html><head></head><body>Marketplace</body></html>", "utf8");
   }
   return bundleDir;
 }
@@ -167,6 +179,37 @@ test("runCli fails when built ui/dist/marketplace.html is missing or target caus
     assert.ok(missingUiRes.err.includes("Missing required built UI bundle"));
     assert.equal(depsCalled, false);
 
+    // Missing sidecars directory fails validation
+    const noSidecarBundle = createFakeBundle(path.join(tmpRoot, "no-sidecar-bundle"), {
+      includeSidecars: false,
+    });
+    const missingSidecarDirRes = execCli({
+      argv: ["install"],
+      rootDir: noSidecarBundle,
+      env: { HOME: homeDir },
+      installDepsFn: () => {
+        depsCalled = true;
+      },
+    });
+    assert.deepEqual(missingSidecarDirRes.res, { handled: true, exitCode: 1 });
+    assert.ok(missingSidecarDirRes.err.includes("Missing required plugin directory"));
+    assert.equal(depsCalled, false);
+
+    // Missing sidecar.json / server.mjs inside sidecars/ fails validation
+    const partialSidecarBundle = createFakeBundle(path.join(tmpRoot, "partial-sidecar-bundle"));
+    fs.rmSync(path.join(partialSidecarBundle, "sidecars", "marketplace", "sidecar.json"));
+    const missingSidecarFileRes = execCli({
+      argv: ["install"],
+      rootDir: partialSidecarBundle,
+      env: { HOME: homeDir },
+      installDepsFn: () => {
+        depsCalled = true;
+      },
+    });
+    assert.deepEqual(missingSidecarFileRes.res, { handled: true, exitCode: 1 });
+    assert.ok(missingSidecarFileRes.err.includes("Missing required sidecar file"));
+    assert.equal(depsCalled, false);
+
     // Self-overwrite guard when bundle lives at the exact target install directory
     const selfTargetHome = path.join(tmpRoot, "self-home");
     const selfBundle = createFakeBundle(
@@ -221,6 +264,8 @@ test("runCli performs global and workspace installs with mocked installDepsFn, c
       assert.equal(fs.existsSync(path.join(globalTarget, file)), true, `Missing ${file}`);
     }
     assert.equal(fs.existsSync(path.join(globalTarget, "server", "index.mjs")), true);
+    assert.equal(fs.existsSync(path.join(globalTarget, "sidecars", "marketplace", "sidecar.json")), true);
+    assert.equal(fs.existsSync(path.join(globalTarget, "sidecars", "marketplace", "server.mjs")), true);
     assert.equal(fs.existsSync(path.join(globalTarget, "ui", "dist", "marketplace.html")), true);
     assert.equal(fs.existsSync(legacyGlobalDir), false);
 
@@ -260,6 +305,8 @@ test("runCli performs global and workspace installs with mocked installDepsFn, c
     const wsTarget = path.join(workspaceDir, ".agents", "plugins", PLUGIN_DIR_NAME);
     assert.deepEqual(wsInstalledTargets, [wsTarget]);
     assert.equal(fs.existsSync(path.join(wsTarget, "plugin.json")), true);
+    assert.equal(fs.existsSync(path.join(wsTarget, "sidecars", "marketplace", "sidecar.json")), true);
+    assert.equal(fs.existsSync(path.join(wsTarget, "sidecars", "marketplace", "server.mjs")), true);
     assert.equal(fs.existsSync(path.join(wsTarget, "ui", "dist", "marketplace.html")), true);
 
     // Workspace uninstall (-w)

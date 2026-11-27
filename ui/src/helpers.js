@@ -45,7 +45,7 @@ export const state = {
   installed: [], // [{ id, slug, scope: 'global'|'project', version, sha, capabilities, manual }]
   workspaceRoots: [],
   activeProjectRoot: "",
-  clientVersion: "1.0.1",
+  clientVersion: "1.0.2",
   platform: "",
   dismissedSelfUpdate: false,
   requiresReload: false,

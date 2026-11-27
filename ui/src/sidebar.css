@@ -1,0 +1,198 @@
+/* Buttons, Action Controls & Narrow Aux Pane Responsive Layout */
+.mp-card-footer {
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--mp-border);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.mp-btn-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border-radius: var(--mp-radius-sm);
+  border: 1px solid var(--mp-border);
+  background: var(--mp-bg);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  max-width: 100%;
+}
+
+.mp-btn:hover:not(:disabled) {
+  background: var(--mp-surface-hover);
+}
+
+.mp-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mp-btn-primary {
+  background: var(--mp-accent);
+  border-color: var(--mp-accent);
+  color: var(--primary-foreground, #ffffff);
+}
+
+.mp-btn-primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+  background: var(--mp-accent);
+}
+
+.mp-btn-danger {
+  color: var(--mp-high-fg);
+  border-color: color-mix(in srgb, var(--mp-high-fg) 40%, var(--mp-border));
+}
+
+.mp-btn-danger:hover:not(:disabled) {
+  background: var(--mp-high-bg);
+}
+
+.mp-icon-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--mp-radius-sm);
+  padding: 3px 6px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--mp-text-muted);
+}
+
+.mp-icon-btn:hover {
+  background: var(--mp-surface-hover);
+  color: var(--mp-text);
+}
+
+.mp-icon-btn.is-active {
+  color: var(--mp-elevated-fg);
+}
+
+/* Aux Pane & Compact Sidebar Widths (~340px - 520px) */
+.mp-shell,
+.mp-header,
+.mp-card,
+.mp-alert {
+  min-width: 0;
+}
+
+.mp-card {
+  overflow-wrap: anywhere;
+}
+
+.mp-alert {
+  flex-wrap: wrap;
+}
+
+.mp-project-pill,
+.mp-project-editor,
+.mp-header-actions,
+.mp-select {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.mp-project-editor {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.mp-project-pill[hidden],
+.mp-project-editor[hidden] {
+  display: none;
+}
+
+.mp-project-input {
+  flex: 1 1 180px;
+  min-width: 140px;
+  padding: 4px 8px;
+  min-height: 28px;
+}
+
+@media (max-width: 520px) {
+  .mp-alerts {
+    padding: 0 10px;
+  }
+
+  .mp-header {
+    padding: 10px 10px 8px;
+    gap: 8px;
+  }
+
+  .mp-header-top {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .mp-title-group {
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+  }
+
+  .mp-header-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .mp-project-pill {
+    flex: 1 1 190px;
+  }
+
+  .mp-project-pill select {
+    flex: 1 1 auto;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .mp-tabs {
+    gap: 4px;
+  }
+
+  .mp-tab {
+    padding: 4px 8px;
+    font-size: 12px;
+  }
+
+  .mp-toggle-hidden {
+    margin-left: 0;
+    padding: 2px 4px;
+  }
+
+  .mp-controls {
+    gap: 6px;
+  }
+
+  .mp-search {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .mp-select {
+    flex: 1 1 calc(50% - 3px);
+    min-width: 0;
+  }
+
+  .mp-grid {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 10px;
+    gap: 10px;
+  }
+
+  .mp-finding-head {
+    flex-wrap: wrap;
+  }
+}

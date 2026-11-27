@@ -20,13 +20,24 @@
             <span id="catalog-meta" class="mp-muted mp-meta">Loading catalog...</span>
           </div>
           <div class="mp-header-actions">
-            <label class="mp-project-pill" title="Target folder for Project installs (.agents/plugins)">
+            <label id="project-pill" class="mp-project-pill" title="Target folder for Project installs (.agents/plugins)">
               <span class="mp-pill-label">Project:</span>
               <select id="project-select" aria-label="Active project root"></select>
               <button id="btn-custom-project" type="button" class="mp-icon-btn" title="Set custom project path">
                 Edit
               </button>
             </label>
+            <div id="custom-project-editor" class="mp-project-editor" hidden>
+              <input
+                id="custom-project-input"
+                class="mp-input mp-project-input"
+                type="text"
+                placeholder="Absolute path to project..."
+                aria-label="Custom project workspace path"
+              />
+              <button id="btn-save-project" type="button" class="mp-btn mp-btn-primary">Apply</button>
+              <button id="btn-cancel-project" type="button" class="mp-btn">Cancel</button>
+            </div>
             <button id="btn-refresh" type="button" class="mp-btn mp-btn-secondary">
               Check Updates
             </button>

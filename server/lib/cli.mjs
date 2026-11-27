@@ -14,7 +14,11 @@ export const REQUIRED_FILES = [
   "CHANGELOG.md",
 ];
 
-export const REQUIRED_DIRS = ["server"];
+export const REQUIRED_DIRS = ["server", "sidecars"];
+const REQUIRED_SIDECAR_FILES = [
+  ["sidecars", "marketplace", "sidecar.json"],
+  ["sidecars", "marketplace", "server.mjs"],
+];
 const UI_BUNDLE_REL_PARTS = ["ui", "dist", "marketplace.html"];
 const VALID_INSTALL_FLAGS = new Set(["--global", "-g", "--workspace", "-w"]);
 const MCP_SERVER_FLAGS = new Set([
@@ -178,6 +182,12 @@ function validateInstallSourceBundle(rootDir) {
     const srcDir = path.join(rootDir, dir);
     if (!fs.existsSync(srcDir) || !fs.statSync(srcDir).isDirectory()) {
       throw new Error(`Missing required plugin directory: ${srcDir}`);
+    }
+  }
+  for (const parts of REQUIRED_SIDECAR_FILES) {
+    const sidecarFile = path.join(rootDir, ...parts);
+    if (!fs.existsSync(sidecarFile) || !fs.statSync(sidecarFile).isFile()) {
+      throw new Error(`Missing required sidecar file: ${sidecarFile}`);
     }
   }
   const uiBundlePath = path.join(rootDir, ...UI_BUNDLE_REL_PARTS);

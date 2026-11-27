@@ -2,6 +2,12 @@
 
 All notable changes to `antigravity-community-marketplace` will be documented in this file.
 
+## [1.0.2] - 2026-11-27
+
+### Added
+- **Dedicated Sidebar Panel Integration:** Community Plugins now registers as a native sidebar view in the Google Antigravity App, syncing automatically with your active workspace and editor theme.
+- **Responsive Compact Layout:** Adapts header controls, filters, plugin cards, and audit views cleanly to narrow sidebar panel widths.
+
 ## [1.0.1] - 2026-11-27
 
 ### Added

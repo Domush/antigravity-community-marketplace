@@ -1,11 +1,4 @@
-import path from "node:path";
-import { z } from "zod";
-import {
-  getPluginsDir,
-  installPlugin,
-  setPluginEnabled,
-  uninstallPlugin,
-} from "./lib/installer.mjs";
+import { TOOL_SCHEMAS } from "./lib/service.mjs";
 
 export function toolError(message) {
   return {
@@ -14,11 +7,18 @@ export function toolError(message) {
   };
 }
 
+function toToolResponse(result) {
+  return {
+    content: [{ type: "text", text: result.text }],
+    structuredContent: result.structuredContent,
+  };
+}
+
 /**
  * Register all app-only (visibility: ["app"]) mutating marketplace tools.
  * Keeping these isolated from LLM visibility prevents prompt injections from modifying plugins.
  */
-export function registerMutatingTools(server, { catalog, store }) {
+export function registerMutatingTools(server, { service }) {
   // -------------------------------------------------------------------------
   // 6. App-Only Tool: Verified Install / Update
   // -------------------------------------------------------------------------
@@ -27,63 +27,12 @@ export function registerMutatingTools(server, { catalog, store }) {
     {
       title: "Install or Update Plugin",
       description: "Downloads pinned SHA tarball, checks denylist, verifies contentTreeSha256, and installs atomically.",
-      inputSchema: {
-        id: z.string().min(3),
-        scope: z.enum(["global", "project"]),
-        workspaceRoot: z.string().optional(),
-        replaceSlug: z.string().optional(),
-        replaceEnabled: z.boolean().optional(),
-      },
+      inputSchema: TOOL_SCHEMAS.mp_install_plugin,
       _meta: { ui: { visibility: ["app"] } },
     },
-    async ({ id, scope, workspaceRoot, replaceSlug, replaceEnabled = true }) => {
+    async (args) => {
       try {
-        // Always revalidate denylist before installing so emergency revocations take effect immediately
-        const [index, denylist] = await Promise.all([
-          catalog.getIndex({ force: false }),
-          catalog.getDenylist({ force: true }),
-        ]);
-        const pluginEntry = (index.plugins || []).find(
-          (p) => p.id.toLowerCase() === id.toLowerCase()
-        );
-        if (!pluginEntry) {
-          return toolError(`Plugin not found in registry index: ${id}`);
-        }
-
-        const record = await installPlugin({
-          pluginEntry,
-          denylist,
-          scope,
-          workspaceRoot,
-          replaceSlug: replaceSlug || null,
-          replaceEnabled,
-        });
-
-        const { migratedFrom, ...lockRecord } = record;
-        if (migratedFrom) {
-          await store.removeInstallRecord({
-            slug: migratedFrom.slug,
-            scope,
-            installPath: migratedFrom.installPath,
-          });
-        }
-        await store.upsertInstallRecord(lockRecord);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: migratedFrom
-                ? `Adopted ${record.id}@${record.version} into ${record.scope} scope (migrated "${migratedFrom.slug}" -> "${record.slug}").`
-                : `Installed ${record.id}@${record.version} into ${record.scope} scope.`,
-            },
-          ],
-          structuredContent: {
-            installed: lockRecord,
-            migratedFrom: migratedFrom || null,
-            requiresReload: true,
-          },
-        };
+        return toToolResponse(await service.installPlugin(args));
       } catch (err) {
         return toolError(`Install failed: ${err.message}`);
       }
@@ -98,28 +47,12 @@ export function registerMutatingTools(server, { catalog, store }) {
     {
       title: "Enable or Disable Plugin",
       description: "Moves an installed plugin between active and disabled directories without deleting files.",
-      inputSchema: {
-        slug: z.string().min(1),
-        scope: z.enum(["global", "project"]),
-        enabled: z.boolean(),
-        workspaceRoot: z.string().optional(),
-      },
+      inputSchema: TOOL_SCHEMAS.mp_toggle_plugin,
       _meta: { ui: { visibility: ["app"] } },
     },
-    async ({ slug, scope, enabled, workspaceRoot }) => {
+    async (args) => {
       try {
-        const moved = await setPluginEnabled({ slug, scope, workspaceRoot, enabled });
-        await store.updateInstallEnabled({
-          slug,
-          scope,
-          fromPath: moved.fromPath,
-          installPath: moved.installPath,
-          enabled,
-        });
-        return {
-          content: [{ type: "text", text: `${enabled ? "Enabled" : "Disabled"} ${slug} (${scope}).` }],
-          structuredContent: { ...moved, requiresReload: true },
-        };
+        return toToolResponse(await service.togglePlugin(args));
       } catch (err) {
         return toolError(`Toggle failed: ${err.message}`);
       }
@@ -134,26 +67,12 @@ export function registerMutatingTools(server, { catalog, store }) {
     {
       title: "Uninstall Plugin",
       description: "Removes an installed plugin folder from global or project scope and cleans lockfile metadata.",
-      inputSchema: {
-        slug: z.string().min(1),
-        id: z.string().optional(),
-        scope: z.enum(["global", "project"]),
-        enabled: z.boolean().optional(),
-        workspaceRoot: z.string().optional(),
-      },
+      inputSchema: TOOL_SCHEMAS.mp_uninstall_plugin,
       _meta: { ui: { visibility: ["app"] } },
     },
-    async ({ slug, scope, enabled = true, workspaceRoot }) => {
+    async (args) => {
       try {
-        const pluginsRoot = getPluginsDir(scope, workspaceRoot, { enabled });
-        const expectedInstallPath = path.join(pluginsRoot, slug);
-        const res = await uninstallPlugin({ slug, scope, workspaceRoot, enabled });
-        await store.removeInstallRecord({ slug, scope, installPath: expectedInstallPath });
-
-        return {
-          content: [{ type: "text", text: `Uninstalled ${slug} (${scope}).` }],
-          structuredContent: { removed: res.removed, requiresReload: true },
-        };
+        return toToolResponse(await service.uninstallPlugin(args));
       } catch (err) {
         return toolError(`Uninstall failed: ${err.message}`);
       }
@@ -168,20 +87,12 @@ export function registerMutatingTools(server, { catalog, store }) {
     {
       title: "Update Marketplace Preferences",
       description: "Toggles favorite or hidden status for a plugin ID in persistent storage.",
-      inputSchema: {
-        id: z.string().min(1),
-        field: z.enum(["favorites", "hidden"]),
-        value: z.boolean(),
-      },
+      inputSchema: TOOL_SCHEMAS.mp_update_prefs,
       _meta: { ui: { visibility: ["app"] } },
     },
-    async ({ id, field, value }) => {
+    async (args) => {
       try {
-        const prefs = await store.updatePref(id, field, value);
-        return {
-          content: [{ type: "text", text: `Updated ${field} for ${id}.` }],
-          structuredContent: { prefs },
-        };
+        return toToolResponse(await service.updatePrefs(args));
       } catch (err) {
         return toolError(`Preference update failed: ${err.message}`);
       }

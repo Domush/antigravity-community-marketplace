@@ -1,6 +1,13 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import {
+  removePluginEntry,
+  stripTrailingSeparators,
+  syncPluginDirectory,
+} from "./cli-sync.mjs";
+
+export { removePluginEntry, syncPluginDirectory };
 
 export const PLUGIN_DIR_NAME = "agy-community-marketplace";
 export const LEGACY_PLUGIN_DIR_NAME = "antigravity-community-marketplace";
@@ -56,13 +63,6 @@ export function loadPackageVersion(rootDir) {
   }
 
   return pkg.version.trim();
-}
-
-function stripTrailingSeparators(targetPath) {
-  const resolved = path.resolve(targetPath);
-  const root = path.parse(resolved).root;
-  if (resolved === root) return resolved;
-  return resolved.replace(/[\\/]+$/, "");
 }
 
 function canonicalizePath(targetPath) {
@@ -133,42 +133,33 @@ function isSourceEnclosingEntry(sourceDir, entryPath) {
   );
 }
 
-/**
- * Safely remove a plugin directory or symlink/junction without deleting symlink targets.
- */
-export function removePluginEntry(entryPath) {
-  if (typeof entryPath !== "string" || entryPath.trim().length === 0) {
-    throw new TypeError("removePluginEntry requires a non-empty entryPath string");
-  }
-
-  const normalizedPath = stripTrailingSeparators(entryPath);
-  if (normalizedPath === path.parse(normalizedPath).root) {
-    throw new Error(`Refusing to remove filesystem root: ${normalizedPath}`);
-  }
-
+function removeIfSymlinkOrMismatched(destPath, expectDirectory) {
   let stat;
   try {
-    stat = fs.lstatSync(normalizedPath);
+    stat = fs.lstatSync(destPath);
   } catch (err) {
-    if (err && err.code === "ENOENT") return false;
+    if (err && err.code === "ENOENT") return;
     throw err;
   }
-
-  if (stat.isSymbolicLink()) {
-    try {
-      fs.unlinkSync(normalizedPath);
-    } catch (unlinkErr) {
-      if (unlinkErr && (unlinkErr.code === "EPERM" || unlinkErr.code === "EISDIR")) {
-        fs.rmdirSync(normalizedPath);
-      } else {
-        throw unlinkErr;
-      }
-    }
-    return true;
+  const mismatch = expectDirectory ? !stat.isDirectory() : stat.isDirectory();
+  if (stat.isSymbolicLink() || mismatch) {
+    removePluginEntry(destPath);
   }
+}
 
-  fs.rmSync(normalizedPath, { recursive: true, force: true });
-  return true;
+function copyFileSafely(srcFile, destFile) {
+  removeIfSymlinkOrMismatched(destFile, false);
+  fs.copyFileSync(srcFile, destFile);
+}
+
+function ensureRealDirectoryPath(baseDir, relParts) {
+  let current = baseDir;
+  for (const part of relParts) {
+    current = path.join(current, part);
+    removeIfSymlinkOrMismatched(current, true);
+    fs.mkdirSync(current, { recursive: true });
+  }
+  return current;
 }
 
 function validateInstallSourceBundle(rootDir) {
@@ -420,17 +411,15 @@ export function runCli({
 
     fs.mkdirSync(targetDir, { recursive: true });
     for (const file of REQUIRED_FILES) {
-      fs.copyFileSync(path.join(rootDir, file), path.join(targetDir, file));
+      copyFileSafely(path.join(rootDir, file), path.join(targetDir, file));
     }
     for (const dir of REQUIRED_DIRS) {
       const destDir = path.join(targetDir, dir);
-      removePluginEntry(destDir);
-      fs.cpSync(path.join(rootDir, dir), destDir, { recursive: true });
+      syncPluginDirectory(path.join(rootDir, dir), destDir);
     }
 
-    const uiDestDir = path.join(targetDir, "ui", "dist");
-    fs.mkdirSync(uiDestDir, { recursive: true });
-    fs.copyFileSync(path.join(rootDir, ...UI_BUNDLE_REL_PARTS), path.join(uiDestDir, "marketplace.html"));
+    const uiDestDir = ensureRealDirectoryPath(targetDir, ["ui", "dist"]);
+    copyFileSafely(path.join(rootDir, ...UI_BUNDLE_REL_PARTS), path.join(uiDestDir, "marketplace.html"));
 
     stdout(`📥 Installing runtime dependencies...`);
     if (installDepsFn) installDepsFn(targetDir);

@@ -1,11 +1,17 @@
 import {
+  capDescription,
   capLabel,
+  classifyInstallStatus,
   esc,
+  getActiveFilterCount,
   getFilteredPlugins,
+  getInstallActionMeta,
   getInstallsFor,
   getRevokedInstalls,
   getSelfUpdateInfo,
   hasUpdateAvailable,
+  renderPluginIcon,
+  riskDescription,
   state,
 } from "./helpers.js";
 
@@ -109,18 +115,43 @@ export function renderAlerts() {
   el.innerHTML = parts.join("");
 }
 
-function scopeBadge(inst, label) {
+function scopeBadge(inst, label, plugin) {
   if (!inst) return "";
+  const status = classifyInstallStatus(inst, plugin);
+  const badges = [];
   if (inst.enabled === false) {
-    return `<span class="mp-badge mp-badge-disabled">Disabled: ${label}</span>`;
+    badges.push(
+      `<span class="mp-badge mp-badge-disabled" title="Plugin is paused in ${label} scope (files preserved in plugins-disabled)">Disabled: ${label}</span>`
+    );
+  } else if (inst.matchTier === "exact_hash") {
+    badges.push(
+      `<span class="mp-badge mp-badge-scope" title="Verified ${label} install matching an exact signed registry tree hash">Installed: ${label} (Auto-Matched)</span>`
+    );
+  } else if (inst.matchTier === "repo_origin") {
+    badges.push(
+      `<span class="mp-badge mp-risk-elevated" title="Manually installed in ${label} scope and linked via GitHub repository origin">Manual Origin: ${label}</span>`
+    );
+  } else {
+    badges.push(
+      `<span class="mp-badge mp-badge-scope" title="Managed ${label} installation tracked by the marketplace">Installed: ${label}</span>`
+    );
   }
-  if (inst.matchTier === "exact_hash") {
-    return `<span class="mp-badge mp-badge-scope">Installed: ${label} (Auto-Matched)</span>`;
+  if (status.isAhead) {
+    badges.push(
+      `<span class="mp-badge mp-badge-ahead" title="Installed local version v${esc(status.installedVersion)} is newer than registry v${esc(status.registryVersion)}">Local v${esc(status.installedVersion)} Ahead</span>`
+    );
   }
-  if (inst.matchTier === "repo_origin") {
-    return `<span class="mp-badge mp-risk-elevated">Manual Origin: ${label}</span>`;
+  return badges.join("");
+}
+
+function getActionTooltip(meta, scope) {
+  if (meta.isDowngrade) {
+    return `Review permission diff and downgrade ${scope} install to registry v${meta.registryVersion}`;
   }
-  return `<span class="mp-badge mp-badge-scope">Installed: ${label}</span>`;
+  if (meta.action === "review-adopt") {
+    return `Review permissions and adopt this manual ${scope} install into verified marketplace tracking`;
+  }
+  return `Review permission diff and update ${scope} install to v${meta.registryVersion}`;
 }
 
 export function renderCard(p) {
@@ -132,36 +163,35 @@ export function renderCard(p) {
   const installs = getInstallsFor(p.id);
   const globalInst = installs.find((i) => i.scope === "global");
   const projectInst = installs.find((i) => i.scope === "project");
-  const updatableInst = installs.find(
-    (i) =>
-      (!i.manual && i.sha && p.release?.sha && i.sha !== p.release.sha) ||
-      i.matchTier === "repo_origin"
-  );
+  const actionEntries = installs
+    .map((inst) => ({ inst, meta: getInstallActionMeta(inst, p) }))
+    .filter((entry) => Boolean(entry.meta));
+  const primaryAction =
+    actionEntries.find((entry) => entry.meta.hasUpdate) || actionEntries[0] || null;
   const isBusy = state.busyIds.has(p.id);
 
   const riskTier = p.security?.riskTier || "unverified";
   const topCaps = (p.security?.capabilities || []).slice(0, 3);
+  const summaryText = p.summary || "No description provided.";
+  const isExpanded = state.expandedIds.has(p.id);
+  const showDescToggle = summaryText.length > 95;
 
   const actionButtons = [];
-  if (updatableInst) {
-    const isAdopt = updatableInst.matchTier === "repo_origin";
-    const btnLabel = isAdopt
-      ? updatableInst.version === p.version
-        ? `Adopt & Verify (v${esc(p.version)})`
-        : `Adopt & Update ${esc(updatableInst.version)} &rarr; ${esc(p.version)}`
-      : `Update ${esc(updatableInst.version)} &rarr; ${esc(p.version)}`;
+  if (primaryAction) {
+    const { inst, meta } = primaryAction;
     actionButtons.push(`
       <button
         type="button"
-        class="mp-btn mp-btn-primary"
-        data-action="${isAdopt ? "review-adopt" : "review-update"}"
+        class="${esc(meta.buttonClass)}"
+        data-action="${esc(meta.action)}"
         data-id="${esc(p.id)}"
-        data-scope="${esc(updatableInst.scope)}"
-        data-replace-slug="${esc(updatableInst.slug)}"
-        data-replace-enabled="${updatableInst.enabled !== false}"
+        data-scope="${esc(inst.scope)}"
+        data-replace-slug="${esc(inst.slug)}"
+        data-replace-enabled="${inst.enabled !== false}"
+        title="${esc(getActionTooltip(meta, inst.scope))}"
         ${isBusy ? "disabled" : ""}
       >
-        ${btnLabel}
+        ${esc(meta.label)}
       </button>
     `);
   }
@@ -169,14 +199,14 @@ export function renderCard(p) {
   if (!p.isManualOnly) {
     if (!globalInst) {
       actionButtons.push(`
-        <button type="button" class="mp-btn" data-action="install" data-id="${esc(p.id)}" data-scope="global" ${isBusy ? "disabled" : ""}>
+        <button type="button" class="mp-btn" data-action="install" data-id="${esc(p.id)}" data-scope="global" title="Install plugin globally for all Antigravity workspaces" ${isBusy ? "disabled" : ""}>
           ${isBusy ? "Working..." : "Install Global"}
         </button>
       `);
     }
     if (!projectInst) {
       actionButtons.push(`
-        <button type="button" class="mp-btn" data-action="install" data-id="${esc(p.id)}" data-scope="project" ${isBusy ? "disabled" : ""}>
+        <button type="button" class="mp-btn" data-action="install" data-id="${esc(p.id)}" data-scope="project" title="Install plugin only into the active project workspace" ${isBusy ? "disabled" : ""}>
           Install Project
         </button>
       `);
@@ -186,10 +216,10 @@ export function renderCard(p) {
   for (const inst of installs) {
     const isEnabled = inst.enabled !== false;
     actionButtons.push(`
-      <button type="button" class="mp-btn" data-action="toggle" data-id="${esc(p.id)}" data-slug="${esc(inst.slug)}" data-scope="${esc(inst.scope)}" data-enabled="${isEnabled}" ${isBusy ? "disabled" : ""}>
+      <button type="button" class="mp-btn" data-action="toggle" data-id="${esc(p.id)}" data-slug="${esc(inst.slug)}" data-scope="${esc(inst.scope)}" data-enabled="${isEnabled}" title="${isEnabled ? "Pause this plugin without deleting its files or settings" : "Re-enable this paused plugin"}" ${isBusy ? "disabled" : ""}>
         ${isEnabled ? "Disable" : "Enable"} (${esc(inst.scope)})
       </button>
-      <button type="button" class="mp-btn mp-btn-danger" data-action="uninstall" data-id="${esc(p.id)}" data-slug="${esc(inst.slug)}" data-scope="${esc(inst.scope)}" data-enabled="${isEnabled}" ${isBusy ? "disabled" : ""}>
+      <button type="button" class="mp-btn mp-btn-danger" data-action="uninstall" data-id="${esc(p.id)}" data-slug="${esc(inst.slug)}" data-scope="${esc(inst.scope)}" data-enabled="${isEnabled}" title="Remove this ${esc(inst.scope)} plugin installation from disk" ${isBusy ? "disabled" : ""}>
         Uninstall (${esc(inst.scope)})
       </button>
     `);
@@ -207,7 +237,7 @@ export function renderCard(p) {
               (m) => `
                 <div class="mp-finding-head" style="font-size:11px">
                   <span><code>${esc(m.id)}</code> &middot; v${esc(m.version)} &middot; &#9733; ${esc(m.stars)}</span>
-                  <button type="button" class="mp-btn" data-action="review-adopt" data-id="${esc(m.id)}" data-scope="${esc(primaryManual.scope)}" data-replace-slug="${esc(primaryManual.slug)}" data-replace-enabled="${primaryManual.enabled !== false}">
+                  <button type="button" class="mp-btn" data-action="review-adopt" data-id="${esc(m.id)}" data-scope="${esc(primaryManual.scope)}" data-replace-slug="${esc(primaryManual.slug)}" data-replace-enabled="${primaryManual.enabled !== false}" title="Inspect and adopt ${esc(m.id)} from the verified registry">
                     Review &amp; Adopt
                   </button>
                 </div>
@@ -219,42 +249,55 @@ export function renderCard(p) {
       : "";
 
   const titleHtml = p.isManualOnly
-    ? `<div class="mp-card-title">
-          <span class="mp-card-name">${esc(p.name)}</span>
-          <span class="mp-card-sub">
-            ${esc(p.author?.login || "unknown")} &middot; v${esc(p.version)} &middot; &#9733; ${esc(p.stats?.stars ?? 0)}
-          </span>
+    ? `<div class="mp-card-ident">
+          ${renderPluginIcon(p)}
+          <div class="mp-card-title">
+            <span class="mp-card-name">${esc(p.name)}</span>
+            <span class="mp-card-sub">
+              ${esc(p.author?.login || "unknown")} &middot; v${esc(p.version)} &middot; &#9733; ${esc(p.stats?.stars ?? 0)}
+            </span>
+          </div>
         </div>`
-    : `<button type="button" class="mp-card-title-btn" data-open-drawer="${esc(p.id)}">
-          <span class="mp-card-name">${esc(p.name)}</span>
-          <span class="mp-card-sub">
-            ${esc(p.author?.login || "unknown")} &middot; v${esc(p.version)} &middot; &#9733; ${esc(p.stats?.stars ?? 0)}
-          </span>
-        </button>`;
+    : `<div class="mp-card-ident">
+          ${renderPluginIcon(p)}
+          <button type="button" class="mp-card-title-btn" data-open-drawer="${esc(p.id)}" data-drawer-tab="overview" title="Open README, release notes, and repository details">
+            <span class="mp-card-name">${esc(p.name)}</span>
+            <span class="mp-card-sub">
+              ${esc(p.author?.login || "unknown")} &middot; v${esc(p.version)} &middot; &#9733; ${esc(p.stats?.stars ?? 0)}
+            </span>
+          </button>
+        </div>`;
 
   return `
     <article class="mp-card ${isHidden ? "is-hidden-item" : ""}">
       <div class="mp-card-head">
         ${titleHtml}
         <div class="mp-card-quick">
-          <button type="button" class="mp-icon-btn ${isFav ? "is-active" : ""}" data-pref="favorites" data-id="${esc(p.id)}" title="${isFav ? "Remove favorite" : "Add favorite"}">
+          <button type="button" class="mp-icon-btn ${isFav ? "is-active" : ""}" data-pref="favorites" data-id="${esc(p.id)}" title="${isFav ? "Remove from Favorites" : "Add to Favorites"}">
             ${isFav ? "&#9733;" : "&#9734;"}
           </button>
-          <button type="button" class="mp-icon-btn ${isHidden ? "is-active" : ""}" data-pref="hidden" data-id="${esc(p.id)}" title="${isHidden ? "Unhide plugin" : "Hide plugin"}">
+          <button type="button" class="mp-icon-btn ${isHidden ? "is-active" : ""}" data-pref="hidden" data-id="${esc(p.id)}" title="${isHidden ? "Unhide plugin in catalog" : "Hide plugin from default view"}">
             ${isHidden ? "Show" : "Hide"}
           </button>
         </div>
       </div>
 
-      <p class="mp-summary">${esc(p.summary || "No description provided.")}</p>
+      <div class="mp-desc-wrap">
+        <p class="mp-summary mp-card-desc ${isExpanded ? "is-expanded" : ""}" title="${esc(summaryText)}">${esc(summaryText)}</p>
+        ${
+          showDescToggle
+            ? `<button type="button" class="mp-desc-toggle" data-toggle-desc="${esc(p.id)}" aria-expanded="${isExpanded}" title="${isExpanded ? "Collapse description" : "Expand full description"}">${isExpanded ? "Show less" : "Read more"}</button>`
+            : ""
+        }
+      </div>
 
       <div class="mp-pill-row">
-        <span class="mp-badge mp-risk-${esc(riskTier)}">Risk: ${esc(riskTier)}</span>
-        ${p.surface?.hasSidebarUi ? `<span class="mp-badge">Sidebar UI</span>` : ""}
-        ${p.requiresCredentials ? `<span class="mp-badge mp-risk-elevated">API Key / OAuth</span>` : ""}
-        ${scopeBadge(globalInst, "Global")}
-        ${scopeBadge(projectInst, "Project")}
-        ${topCaps.map((c) => `<span class="mp-badge">${esc(capLabel(c))}</span>`).join("")}
+        <span class="mp-badge mp-risk-${esc(riskTier)}" title="${esc(riskDescription(riskTier))}">Risk: ${esc(riskTier)}</span>
+        ${p.surface?.hasSidebarUi ? `<span class="mp-badge" title="Includes an interactive MCP App sidebar panel inside Antigravity">Sidebar UI</span>` : ""}
+        ${p.requiresCredentials ? `<span class="mp-badge mp-risk-elevated" title="Requires external API keys or OAuth login credentials">API Key / OAuth</span>` : ""}
+        ${scopeBadge(globalInst, "Global", p)}
+        ${scopeBadge(projectInst, "Project", p)}
+        ${topCaps.map((c) => `<span class="mp-badge" title="${esc(capDescription(c))}">${esc(capLabel(c))}</span>`).join("")}
       </div>
       ${suggestionBanner}
 
@@ -262,7 +305,10 @@ export function renderCard(p) {
         <div class="mp-btn-group">${actionButtons.join("")}</div>
         ${
           !p.isManualOnly
-            ? `<button type="button" class="mp-icon-btn" data-open-drawer="${esc(p.id)}">Audit &rarr;</button>`
+            ? `<div class="mp-btn-group mp-drawer-actions">
+                <button type="button" class="mp-icon-btn" data-open-drawer="${esc(p.id)}" data-drawer-tab="overview" title="View README, release notes, and repository links">Details</button>
+                <button type="button" class="mp-icon-btn" data-open-drawer="${esc(p.id)}" data-drawer-tab="audit" title="Inspect static security findings, capabilities, and local collisions">Audit &rarr;</button>
+              </div>`
             : ""
         }
       </div>
@@ -270,8 +316,32 @@ export function renderCard(p) {
   `;
 }
 
+export function updateFilterControls() {
+  const activeCount = getActiveFilterCount();
+  const hasNonDefaultSort = state.sort !== "stars";
+  const toggleBtn = document.getElementById("btn-toggle-filters");
+  const clearBtn = document.getElementById("btn-clear-filters");
+  const drawerEl = document.getElementById("filter-drawer");
+
+  if (toggleBtn) {
+    toggleBtn.textContent = activeCount > 0 ? `Filters (${activeCount})` : "Filters";
+    toggleBtn.setAttribute("aria-expanded", String(state.filtersOpen));
+    toggleBtn.classList.toggle("is-active", state.filtersOpen || activeCount > 0);
+    toggleBtn.title = activeCount > 0
+      ? `Show or hide filters (${activeCount} active)`
+      : "Show or hide category, surface, risk, and sort filters";
+  }
+  if (clearBtn) {
+    clearBtn.hidden = activeCount === 0 && !hasNonDefaultSort;
+  }
+  if (drawerEl) {
+    drawerEl.hidden = !state.filtersOpen;
+  }
+}
+
 export function render() {
   renderAlerts();
+  updateFilterControls();
 
   const plugins = state.catalog.plugins || [];
   const updateCount = plugins.filter(hasUpdateAvailable).length;

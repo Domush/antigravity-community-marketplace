@@ -18,6 +18,7 @@ import {
 } from "./installer.mjs";
 import { runPreflightChecks } from "./preflight.mjs";
 import { detectLiveCollisions, scanInstalledPlugins } from "./scanner-local.mjs";
+import { compareSemver, parseSemver } from "./semver.mjs";
 import { PluginStore } from "./store.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -190,11 +191,20 @@ export function summarizeStatus(index, denylist, installed) {
       revoked += 1;
     }
     const latest = pluginById.get(idKey);
-    const isOutdatedManaged =
-      latest && !inst.manual && inst.sha && latest.release?.sha && inst.sha !== latest.release.sha;
-    const isAdoptableOrigin = latest && inst.matchTier === "repo_origin";
-    if (isOutdatedManaged || isAdoptableOrigin) {
-      updates += 1;
+    if (latest) {
+      const installedVersion = typeof inst.version === "string" ? inst.version.trim() : "";
+      const registryVersion = typeof latest.version === "string" ? latest.version.trim() : "";
+      const cmp = compareSemver(installedVersion, registryVersion);
+      const isAhead = cmp !== null && cmp > 0;
+      const isBehind = cmp !== null && cmp < 0;
+      const isOutdatedManaged =
+        !inst.manual && inst.sha && latest.release?.sha && inst.sha !== latest.release.sha && !isAhead;
+      const isAdoptableOrigin =
+        inst.matchTier === "repo_origin" &&
+        (isBehind || (parseSemver(installedVersion) === null && Boolean(registryVersion)));
+      if (isOutdatedManaged || isAdoptableOrigin) {
+        updates += 1;
+      }
     }
   }
 

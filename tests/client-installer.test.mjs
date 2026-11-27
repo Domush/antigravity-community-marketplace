@@ -361,7 +361,7 @@ describe("server/lib/installer.mjs — denylist blocking", () => {
 // 3. Local Scanner & Live Collision Detection
 // ---------------------------------------------------------------------------
 describe("server/lib/scanner-local.mjs — local discovery and collision warnings", () => {
-  it("discovers managed and manual plugins, ignores staging dirs, and flags slash/MCP/hook collisions", async () => {
+  it("discovers managed and manual plugins, ignores staging dirs, flags slash/MCP/agent collisions, and ignores shared hookEvents", async () => {
     await withTempDir(async (tmp) => {
       const dataDir = path.join(tmp, "plugin-data");
       const workspaceRoot = path.join(tmp, "workspace");
@@ -462,11 +462,11 @@ describe("server/lib/scanner-local.mjs — local discovery and collision warning
         installedPlugins: projectInstalled,
       });
 
-      assert.equal(warnings.length, 5);
+      assert.equal(warnings.length, 4);
       assert.ok(warnings.some((w) => w.includes('Slash command "/uitk-check"') && w.includes("unity-helper")));
       assert.ok(warnings.some((w) => w.includes('Slash command "/deploy-check"') && w.includes("custom-manual-kit")));
       assert.ok(warnings.some((w) => w.includes('MCP server name "unity-helper_unity-mcp"')));
-      assert.ok(warnings.some((w) => w.includes('Lifecycle hook "PreToolUse"')));
+      assert.equal(warnings.some((w) => w.includes("PreToolUse") || w.includes("Lifecycle hook")), false);
       assert.ok(warnings.some((w) => w.includes('Custom agent "shader-reviewer"')));
 
       // 5. Self-collision exclusion: updating acme-dev/agy-unity-helper in place must emit 0 warnings

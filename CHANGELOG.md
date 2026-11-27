@@ -2,6 +2,17 @@
 
 All notable changes to `antigravity-community-marketplace` will be documented in this file.
 
+## [1.0.3] - 2026-11-27
+
+### Improved
+- **Collapsible Compact Filter Bar:** Moves category, surface, risk, credential, and sort controls into an expandable filter drawer with an active filter count badge and quick reset, keeping plugin cards immediately visible at the top of the sidebar.
+- **Plugin Icons & Monogram Fallbacks:** Displays plugin and author icons across marketplace cards and detail drawer headers with clean two-letter monogram badges when no icon image is present.
+- **Direct Details & Audit Navigation:** Adds dedicated Details and Audit actions on every plugin card along with hover tooltips and expandable descriptions.
+- **Clearer Security Context & Tooltips:** Adds helpful tooltips across controls, risk tiers, and capability badges, and enriches security scan findings with plain-language capability context and clean source-inspection guidance.
+- **Focused Collision Warnings:** Highlights genuine slash command, MCP server, and custom agent conflicts while allowing multiple plugins to subscribe to standard Antigravity lifecycle events seamlessly.
+- **Version-Aware Plugin Tracking:** Compares full semantic versions (including prerelease tags) so locally installed plugins ahead of the catalog release display clear local-ahead status badges and accurate update counts.
+- **Explicit Downgrade Confirmation:** Provides an optional registry adoption action with a clear version comparison and confirmation notice inside the security audit drawer when adopting an older catalog release over a newer local installation.
+
 ## [1.0.2] - 2026-11-27
 
 ### Added

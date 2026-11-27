@@ -22,8 +22,8 @@
           <div class="mp-header-actions">
             <label id="project-pill" class="mp-project-pill" title="Target folder for Project installs (.agents/plugins)">
               <span class="mp-pill-label">Project:</span>
-              <select id="project-select" aria-label="Active project root"></select>
-              <button id="btn-custom-project" type="button" class="mp-icon-btn" title="Set custom project path">
+              <select id="project-select" aria-label="Active project root" title="Active workspace folder used for Project-scoped plugin installs"></select>
+              <button id="btn-custom-project" type="button" class="mp-icon-btn" title="Set a custom project workspace folder path">
                 Edit
               </button>
             </label>
@@ -34,11 +34,12 @@
                 type="text"
                 placeholder="Absolute path to project..."
                 aria-label="Custom project workspace path"
+                title="Enter the absolute path to your project root"
               />
-              <button id="btn-save-project" type="button" class="mp-btn mp-btn-primary">Apply</button>
-              <button id="btn-cancel-project" type="button" class="mp-btn">Cancel</button>
+              <button id="btn-save-project" type="button" class="mp-btn mp-btn-primary" title="Apply custom project workspace path">Apply</button>
+              <button id="btn-cancel-project" type="button" class="mp-btn" title="Cancel editing project path">Cancel</button>
             </div>
-            <button id="btn-refresh" type="button" class="mp-btn mp-btn-secondary">
+            <button id="btn-refresh" type="button" class="mp-btn mp-btn-secondary" title="Sync the signed catalog and check installed plugins for updates">
               Check Updates
             </button>
           </div>
@@ -46,58 +47,83 @@
 
         <!-- Navigation Tabs -->
         <nav class="mp-tabs" role="tablist" aria-label="Marketplace views">
-          <button class="mp-tab is-active" data-tab="browse" role="tab" aria-selected="true">
+          <button class="mp-tab is-active" data-tab="browse" role="tab" aria-selected="true" title="Browse all verified plugins in the community catalog">
             Browse <span class="mp-count" id="count-browse">0</span>
           </button>
-          <button class="mp-tab" data-tab="installed" role="tab" aria-selected="false">
+          <button class="mp-tab" data-tab="installed" role="tab" aria-selected="false" title="View plugins installed globally or in the active project">
             Installed <span class="mp-count" id="count-installed">0</span>
           </button>
-          <button class="mp-tab" data-tab="updates" role="tab" aria-selected="false">
+          <button class="mp-tab" data-tab="updates" role="tab" aria-selected="false" title="View installed plugins with verified updates available">
             Updates <span class="mp-count mp-count-accent" id="count-updates">0</span>
           </button>
-          <button class="mp-tab" data-tab="favorites" role="tab" aria-selected="false">
+          <button class="mp-tab" data-tab="favorites" role="tab" aria-selected="false" title="View plugins you starred as favorites">
             Favorites <span class="mp-count" id="count-favorites">0</span>
           </button>
-          <label class="mp-toggle-hidden">
+          <label class="mp-toggle-hidden" title="Include plugins you previously hid from the list">
             <input type="checkbox" id="chk-show-hidden" />
             <span>Show Hidden</span>
           </label>
         </nav>
 
-        <!-- Search & Filter Bar -->
+        <!-- Search & Collapsible Filter Bar -->
         <div class="mp-controls">
-          <input
-            id="search-input"
-            class="mp-input mp-search"
-            type="search"
-            placeholder="Search plugins, authors, tags..."
-            autocomplete="off"
-          />
-          <select id="filter-category" class="mp-select" aria-label="Filter by category">
-            <option value="all">All Categories</option>
-          </select>
-          <select id="filter-surface" class="mp-select" aria-label="Filter by surface">
-            <option value="all">All Surfaces</option>
-            <option value="sidebar_ui">Has Sidebar UI</option>
-            <option value="prompt_only">Prompt / Rules Only</option>
-            <option value="mcp_stdio">Local MCP Server</option>
-            <option value="hooks">Shell Lifecycle Hooks</option>
-          </select>
-          <select id="filter-risk" class="mp-select" aria-label="Maximum risk tier">
-            <option value="all">Any Risk Tier</option>
-            <option value="low">Low Risk Only</option>
-            <option value="elevated">Low + Elevated</option>
-          </select>
-          <select id="sort-select" class="mp-select" aria-label="Sort plugins">
-            <option value="stars">Sort: Stars</option>
-            <option value="updated">Sort: Recently Updated</option>
-            <option value="risk">Sort: Lowest Risk</option>
-            <option value="name">Sort: Name (A-Z)</option>
-          </select>
-          <label class="mp-chip-check">
-            <input type="checkbox" id="chk-no-creds" />
-            <span>No API Keys</span>
-          </label>
+          <div class="mp-controls-row">
+            <input
+              id="search-input"
+              class="mp-input mp-search"
+              type="search"
+              placeholder="Search plugins, authors, tags..."
+              autocomplete="off"
+              title="Search plugins by name, author, description, category, or tag"
+            />
+            <button
+              id="btn-toggle-filters"
+              type="button"
+              class="mp-btn mp-filter-toggle"
+              aria-expanded="false"
+              aria-controls="filter-drawer"
+              title="Show or hide category, surface, risk, and sort filters"
+            >
+              Filters
+            </button>
+            <button
+              id="btn-clear-filters"
+              type="button"
+              class="mp-icon-btn mp-filter-clear"
+              title="Reset all active filters and sorting"
+              hidden
+            >
+              Clear
+            </button>
+          </div>
+
+          <div id="filter-drawer" class="mp-filter-drawer" hidden>
+            <select id="filter-category" class="mp-select" aria-label="Filter by category" title="Filter plugins by registry category">
+              <option value="all">All Categories</option>
+            </select>
+            <select id="filter-surface" class="mp-select" aria-label="Filter by surface" title="Filter plugins by integration surface (UI, rules, MCP server, or hooks)">
+              <option value="all">All Surfaces</option>
+              <option value="sidebar_ui">Has Sidebar UI</option>
+              <option value="prompt_only">Prompt / Rules Only</option>
+              <option value="mcp_stdio">Local MCP Server</option>
+              <option value="hooks">Shell Lifecycle Hooks</option>
+            </select>
+            <select id="filter-risk" class="mp-select" aria-label="Maximum risk tier" title="Filter plugins by maximum automated security risk tier">
+              <option value="all">Any Risk Tier</option>
+              <option value="low">Low Risk Only</option>
+              <option value="elevated">Low + Elevated</option>
+            </select>
+            <select id="sort-select" class="mp-select" aria-label="Sort plugins" title="Choose how plugin results are ordered">
+              <option value="stars">Sort: Stars</option>
+              <option value="updated">Sort: Recently Updated</option>
+              <option value="risk">Sort: Lowest Risk</option>
+              <option value="name">Sort: Name (A-Z)</option>
+            </select>
+            <label class="mp-chip-check" title="Hide plugins that require external API keys or OAuth login">
+              <input type="checkbox" id="chk-no-creds" />
+              <span>No API Keys</span>
+            </label>
+          </div>
         </div>
       </header>
 

@@ -83,7 +83,7 @@ Every plugin in the registry is scanned by an automated, open-source GitHub Acti
 * **Mandatory Audit Gate:** Clicking **Update**, or installing any elevated/high-risk or credential-requiring plugin, opens the **Security Audit Drawer** before anything is downloaded.
 * **Permission Escalation Diffs:** On updates, the drawer compares your installed version's capabilities against the new version and highlights newly added permissions (such as a new `Shell Lifecycle Hook` or `Unpinned Remote Package`) in red.
 * **OS & Runtime Pre-Flight:** Before installing, the client checks your local `PATH` for required MCP/hook runtimes (`node`, `python3`, `uvx`, `docker`, `pwsh`) and warns if a shell hook uses POSIX-only syntax on Windows or Windows-only syntax on macOS/Linux.
-* **Live Collision Detection:** Warns if a plugin registers a `/slash` command, namespaced MCP server, custom agent, or lifecycle hook that conflicts with an active local plugin.
+* **Live Collision Detection:** Warns if a plugin registers a `/slash` command, namespaced MCP server, or custom agent that conflicts with an active local plugin.
 
 ---
 

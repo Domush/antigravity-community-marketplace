@@ -133,10 +133,10 @@ select:focus-visible {
   z-index: 10;
   background: var(--mp-bg);
   border-bottom: 1px solid var(--mp-border);
-  padding: 12px 16px 10px;
+  padding: 9px 14px 8px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 7px;
 }
 
 .mp-header-top {
@@ -251,12 +251,11 @@ select:focus-visible {
   cursor: pointer;
 }
 
-/* Search & Filters */
+/* Search & Collapsible Filters (layout rules in sidebar.css) */
 .mp-controls {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .mp-input,
@@ -264,20 +263,20 @@ select:focus-visible {
   background: var(--mp-surface);
   border: 1px solid var(--mp-border);
   border-radius: var(--mp-radius-sm);
-  padding: 6px 9px;
-  min-height: 30px;
+  padding: 5px 9px;
+  min-height: 29px;
 }
 
 .mp-search {
-  flex: 1 1 200px;
-  min-width: 160px;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .mp-chip-check {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 5px 9px;
+  padding: 4px 9px;
   border: 1px solid var(--mp-border);
   border-radius: var(--mp-radius-sm);
   background: var(--mp-surface);
@@ -289,8 +288,8 @@ select:focus-visible {
 .mp-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
-  gap: 12px;
-  padding: 16px;
+  gap: 10px;
+  padding: 12px 14px;
 }
 
 .mp-empty {
@@ -334,6 +333,7 @@ select:focus-visible {
   padding: 0;
   text-align: left;
   cursor: pointer;
+  min-width: 0;
 }
 
 .mp-card-title-btn:hover .mp-card-name {

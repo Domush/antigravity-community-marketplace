@@ -361,7 +361,6 @@ export function detectLiveCollisions({ candidateId, candidateCollisions, install
   const targetIdLower = candidateId.toLowerCase();
   const candidateSlash = new Set(candidateCollisions.slashCommands || []);
   const candidateMcp = new Set(candidateCollisions.mcpServerNames || []);
-  const candidateHooks = new Set(candidateCollisions.hookEvents || []);
   const candidateAgents = new Set(candidateCollisions.agentNames || []);
 
   for (const inst of installedPlugins) {
@@ -379,11 +378,6 @@ export function detectLiveCollisions({ candidateId, candidateCollisions, install
     for (const srv of inst.surfaces?.mcpServerNames || []) {
       if (candidateMcp.has(srv)) {
         warnings.push(`MCP server name "${srv}" collides with installed plugin ${label}.`);
-      }
-    }
-    for (const ev of inst.surfaces?.hookEvents || []) {
-      if (candidateHooks.has(ev)) {
-        warnings.push(`Lifecycle hook "${ev}" also runs in installed plugin ${label} (verify execution order).`);
       }
     }
     for (const agent of inst.surfaces?.agentNames || []) {

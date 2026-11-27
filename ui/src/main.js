@@ -262,6 +262,37 @@ function bindEvents() {
     render();
   });
 
+  document.getElementById("btn-toggle-filters").addEventListener("click", () => {
+    state.filtersOpen = !state.filtersOpen;
+    render();
+  });
+
+  document.getElementById("btn-clear-filters").addEventListener("click", () => {
+    state.category = "all";
+    state.surface = "all";
+    state.maxRisk = "all";
+    state.sort = "stars";
+    state.noCredsOnly = false;
+    document.getElementById("filter-category").value = "all";
+    document.getElementById("filter-surface").value = "all";
+    document.getElementById("filter-risk").value = "all";
+    document.getElementById("sort-select").value = "stars";
+    document.getElementById("chk-no-creds").checked = false;
+    render();
+  });
+
+  // Hide failed plugin/avatar images via capture listener so the monogram fallback shows cleanly
+  document.addEventListener(
+    "error",
+    (e) => {
+      const target = e.target;
+      if (target instanceof HTMLImageElement && target.classList.contains("mp-plugin-icon-img")) {
+        target.remove();
+      }
+    },
+    true
+  );
+
   document.getElementById("project-select").addEventListener("change", (e) => {
     state.activeProjectRoot = e.target.value;
     loadBootstrap(false);
@@ -340,11 +371,20 @@ function bindEvents() {
   });
 
   document.getElementById("plugin-grid").addEventListener("click", (e) => {
-    const el = e.target.closest("[data-open-drawer], [data-pref], [data-action]");
+    const el = e.target.closest("[data-open-drawer], [data-toggle-desc], [data-pref], [data-action]");
     if (!el) return;
 
+    if (el.dataset.toggleDesc) {
+      const id = el.dataset.toggleDesc;
+      if (state.expandedIds.has(id)) state.expandedIds.delete(id);
+      else state.expandedIds.add(id);
+      render();
+      return;
+    }
+
     if (el.dataset.openDrawer) {
-      openDrawer(el.dataset.openDrawer);
+      const subTab = el.dataset.drawerTab === "overview" ? "overview" : "audit";
+      openDrawer(el.dataset.openDrawer, { subTab });
       return;
     }
 

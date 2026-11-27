@@ -87,7 +87,10 @@ server.registerResource(
     _meta: {
       ui: {
         csp: {
-          resourceDomains: ["https://avatars.githubusercontent.com"],
+          resourceDomains: [
+            "https://avatars.githubusercontent.com",
+            "https://raw.githubusercontent.com",
+          ],
         },
       },
     },

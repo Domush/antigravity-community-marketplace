@@ -1,16 +1,49 @@
 import {
+  capDescription,
   capLabel,
+  classifyInstallStatus,
   computePermissionDiff,
   esc,
+  formatFindingSnippet,
   getInstallsFor,
+  inferFindingCapability,
+  isSafeHttpUrl,
   REGISTRY_ISSUE_REPO,
+  renderPluginIcon,
+  riskDescription,
+  severityDescription,
   state,
 } from "./helpers.js";
+import { renderMarkdown } from "./markdown.js";
 
-function buildAuditBlocks({ summary, detail, collisions, preflight, findings, targetCaps, targetInstall, diff, pending }) {
+function buildAuditBlocks({
+  summary,
+  detail,
+  collisions,
+  preflight,
+  findings,
+  targetCaps,
+  targetInstall,
+  diff,
+  pending,
+  isAhead,
+}) {
   const blocks = [];
 
-  // 0. Folder migration & local-edit overwrite warning when adopting a manual plugin
+  // 0a. Local-ahead downgrade warning when installed version is newer than registry release
+  if (isAhead && targetInstall) {
+    blocks.push(`
+      <section class="mp-panel mp-panel-danger">
+        <h3>Downgrade Warning: Local Version Ahead</h3>
+        <div style="font-size:12px">
+          The locally installed version (<code>v${esc(targetInstall.version)}</code>) is newer than the verified registry release (<code>v${esc(summary.version)}</code>).
+          Confirming will downgrade the plugin to <code>v${esc(summary.version)}</code> and overwrite local changes.
+        </div>
+      </section>
+    `);
+  }
+
+  // 0b. Folder migration & local-edit overwrite warning when adopting a manual plugin
   if (pending?.replaceSlug) {
     const canonicalSlug = summary.id.replace("/", "--").toLowerCase();
     const migrating = pending.replaceSlug !== canonicalSlug;
@@ -29,18 +62,20 @@ function buildAuditBlocks({ summary, detail, collisions, preflight, findings, ta
     `);
   }
 
-  // 1. Permission Escalation Diff (on updates) or Granted Capabilities (on fresh install)
+  // 1. Permission Escalation Diff (on updates/downgrades) or Granted Capabilities (on fresh install)
   if (diff) {
+    const diffHeading = isAhead
+      ? `Version &amp; Permission Diff: v${esc(targetInstall.version)} &rarr; v${esc(summary.version)} (Downgrade)`
+      : `Permission Diff: v${esc(targetInstall.version)} &rarr; v${esc(summary.version)}`;
     blocks.push(`
-      <section class="mp-panel ${diff.hasEscalation ? "mp-panel-danger" : ""}">
+      <section class="mp-panel ${diff.hasEscalation || isAhead ? "mp-panel-danger" : ""}">
         <h3>
-          Permission Diff: v${esc(targetInstall.version)} &rarr; v${esc(summary.version)}
-          ${diff.hasEscalation ? " (Escalation Detected)" : ""}
+          ${diffHeading}${diff.hasEscalation ? " (Escalation Detected)" : ""}
         </h3>
         <ul class="mp-diff-list">
-          ${diff.added.map((c) => `<li class="mp-diff-added">+ ${esc(capLabel(c))} (${esc(c)})</li>`).join("")}
-          ${diff.removed.map((c) => `<li class="mp-diff-removed">- ${esc(capLabel(c))} (${esc(c)})</li>`).join("")}
-          ${diff.unchanged.map((c) => `<li class="mp-muted">  ${esc(capLabel(c))}</li>`).join("")}
+          ${diff.added.map((c) => `<li class="mp-diff-added" title="${esc(capDescription(c))}">+ ${esc(capLabel(c))} (${esc(c)})</li>`).join("")}
+          ${diff.removed.map((c) => `<li class="mp-diff-removed" title="${esc(capDescription(c))}">- ${esc(capLabel(c))} (${esc(c)})</li>`).join("")}
+          ${diff.unchanged.map((c) => `<li class="mp-muted" title="${esc(capDescription(c))}">  ${esc(capLabel(c))}</li>`).join("")}
           ${
             diff.added.length === 0 && diff.removed.length === 0
               ? `<li class="mp-muted">No capability changes since installed version.</li>`
@@ -54,7 +89,7 @@ function buildAuditBlocks({ summary, detail, collisions, preflight, findings, ta
       <section class="mp-panel">
         <h3>Declared &amp; Detected Capabilities</h3>
         <div class="mp-pill-row">
-          ${targetCaps.map((c) => `<span class="mp-badge">${esc(capLabel(c))}</span>`).join("")}
+          ${targetCaps.map((c) => `<span class="mp-badge" title="${esc(capDescription(c))}">${esc(capLabel(c))}</span>`).join("")}
         </div>
         <div class="mp-muted" style="font-size:11px">
           Pinned Commit: <code>${esc(summary.release.sha.slice(0, 12))}</code> &middot;
@@ -120,26 +155,56 @@ function buildAuditBlocks({ summary, detail, collisions, preflight, findings, ta
         findings.length === 0
           ? `<p class="mp-muted" style="margin:0">No code, manifest, or prompt-injection flags triggered.</p>`
           : findings
-              .map(
-                (f) => `
+              .map((f) => {
+                const riskClass =
+                  f.severity === "critical" || f.severity === "high"
+                    ? "high"
+                    : f.severity === "medium"
+                      ? "elevated"
+                      : "low";
+                const findingCap = inferFindingCapability(f);
+                const snippet = formatFindingSnippet(f.snippet);
+                const hasBlobUrl = isSafeHttpUrl(f.githubBlobUrl);
+                return `
                   <div class="mp-finding">
                     <div class="mp-finding-head">
-                      <span>
-                        <span class="mp-badge mp-risk-${esc(f.severity === "critical" || f.severity === "high" ? "high" : f.severity === "medium" ? "elevated" : "low")}">
+                      <span class="mp-finding-badges">
+                        <span class="mp-badge mp-risk-${esc(riskClass)}" title="${esc(severityDescription(f.severity))}">
                           ${esc(f.severity)}
                         </span>
-                        <strong>${esc(f.id)}</strong> <span class="mp-muted">(${esc(f.layer)})</span>
+                        ${
+                          findingCap
+                            ? `<span class="mp-badge" title="${esc(capDescription(findingCap))}">${esc(capLabel(findingCap))}</span>`
+                            : ""
+                        }
+                        <strong>${esc(f.id)}</strong>
+                        <span class="mp-muted" title="Static analysis detection layer: ${esc(f.layer)}">(${esc(f.layer)})</span>
                       </span>
-                      <button type="button" class="mp-btn" data-open-url="${esc(f.githubBlobUrl)}">
+                      <button
+                        type="button"
+                        class="mp-btn"
+                        data-open-url="${esc(f.githubBlobUrl || "")}"
+                        title="${hasBlobUrl ? `Open ${esc(f.file)} at line ${esc(f.line)} on GitHub` : "GitHub source URL unavailable for this finding"}"
+                        ${hasBlobUrl ? "" : "disabled"}
+                      >
                         Inspect Line &nearr;
                       </button>
                     </div>
                     <div>${esc(f.message)}</div>
+                    ${
+                      findingCap
+                        ? `<div class="mp-muted mp-finding-cap-note">${esc(capDescription(findingCap))}</div>`
+                        : ""
+                    }
                     <div class="mp-muted" style="font-size:11px">${esc(f.file)}:${esc(f.line)}</div>
-                    ${f.snippet ? `<pre class="mp-code">${esc(f.snippet)}</pre>` : ""}
+                    ${
+                      snippet
+                        ? `<pre class="mp-code">${esc(snippet)}</pre>`
+                        : `<div class="mp-muted mp-finding-fallback">Matched static pattern &mdash; click Inspect Line to view source on GitHub.</div>`
+                    }
                   </div>
-                `
-              )
+                `;
+              })
               .join("")
       }
     </section>
@@ -152,20 +217,31 @@ function buildOverviewHtml(summary, detail) {
   const reportUrl =
     `${REGISTRY_ISSUE_REPO}/issues/new?title=${encodeURIComponent(`Report plugin: ${summary.id}`)}` +
     `&body=${encodeURIComponent(`Plugin: ${summary.id}\nSHA: ${summary.release.sha}\nReason:\n`)}`;
+  const mdOpts = {
+    linkMode: "button",
+    repoUrl: summary.repoUrl,
+    sha: summary.release?.sha || "",
+  };
+  const releaseNotesHtml = detail?.latestReleaseNotes
+    ? renderMarkdown(detail.latestReleaseNotes, mdOpts)
+    : "";
+  const readmeHtml = detail?.readmeMarkdown
+    ? renderMarkdown(detail.readmeMarkdown, mdOpts)
+    : "";
 
   return `
     ${
-      detail?.latestReleaseNotes
-        ? `<section class="mp-panel"><h3>Release Notes (${esc(summary.release.ref)})</h3><pre class="mp-readme">${esc(detail.latestReleaseNotes)}</pre></section>`
+      releaseNotesHtml
+        ? `<section class="mp-panel"><h3>Release Notes (${esc(summary.release.ref)})</h3>${releaseNotesHtml}</section>`
         : ""
     }
     <section class="mp-panel">
       <h3>README</h3>
-      <pre class="mp-readme">${esc(detail?.readmeMarkdown || "No README available.")}</pre>
+      ${readmeHtml || `<p class="mp-muted" style="margin:0">No README available.</p>`}
     </section>
     <div class="mp-btn-group">
-      <button type="button" class="mp-btn" data-open-url="${esc(summary.repoUrl)}">Open GitHub Repo &nearr;</button>
-      <button type="button" class="mp-btn mp-btn-danger" data-open-url="${esc(reportUrl)}">Report Plugin &nearr;</button>
+      <button type="button" class="mp-btn" data-open-url="${esc(summary.repoUrl)}" title="Open this plugin repository on GitHub">Open GitHub Repo &nearr;</button>
+      <button type="button" class="mp-btn mp-btn-danger" data-open-url="${esc(reportUrl)}" title="Open a pre-filled GitHub issue to report a malicious or broken plugin">Report Plugin &nearr;</button>
     </div>
   `;
 }
@@ -193,14 +269,18 @@ export function renderDrawer() {
   const pending = state.drawer.pendingAction;
   const targetInstall = pending
     ? installs.find((i) => i.scope === pending.scope)
-    : installs[0];
+    : installs.find((i) => classifyInstallStatus(i, summary).isAhead) || installs[0];
 
   const detail = state.drawer.detail?.detail || null;
   const collisions = state.drawer.detail?.liveCollisions || [];
   const preflight = state.drawer.detail?.preflight || null;
   const findings = detail?.securityReport?.findings || [];
   const targetCaps = detail?.securityReport?.capabilities || summary.security?.capabilities || [];
-  const isUpdate = Boolean(targetInstall && !targetInstall.manual && targetInstall.sha !== summary.release?.sha);
+  const installStatus = targetInstall ? classifyInstallStatus(targetInstall, summary) : null;
+  const isAhead = Boolean(installStatus?.isAhead);
+  const isUpdate = Boolean(
+    targetInstall && (isAhead || (!targetInstall.manual && targetInstall.sha !== summary.release?.sha))
+  );
   const diff = isUpdate ? computePermissionDiff(targetInstall.capabilities, targetCaps) : null;
   const isBusy = state.busyIds.has(summary.id);
 
@@ -220,46 +300,60 @@ export function renderDrawer() {
       targetInstall,
       diff,
       pending,
+      isAhead,
     });
   } else {
     bodyHtml = buildOverviewHtml(summary, detail);
   }
 
   // Footer Confirmation Actions
+  const confirmLabel = pending
+    ? isBusy
+      ? "Verifying & Installing..."
+      : isAhead
+        ? `Confirm Downgrade to v${esc(summary.version)} (${esc(pending.scope)})`
+        : `Confirm ${pending.type === "adopt" ? "Adopt & Verify" : pending.type === "update" ? "Update" : "Install"} (${esc(pending.scope)})`
+    : "";
+  const confirmBtnClass = isAhead ? "mp-btn mp-btn-danger" : "mp-btn mp-btn-primary";
+  const riskTier = summary.security?.riskTier || "unverified";
   const confirmAction = pending
     ? `<button
         type="button"
-        class="mp-btn mp-btn-primary"
+        class="${confirmBtnClass}"
         data-confirm-install="${esc(summary.id)}"
         data-scope="${esc(pending.scope)}"
         ${pending.replaceSlug ? `data-replace-slug="${esc(pending.replaceSlug)}" data-replace-enabled="${pending.replaceEnabled !== false}"` : ""}
+        title="Verify integrity hash and apply ${esc(pending.type)} in ${esc(pending.scope)} scope"
         ${isBusy ? "disabled" : ""}
       >
-        ${isBusy ? "Verifying & Installing..." : `Confirm ${pending.type === "adopt" ? "Adopt & Verify" : pending.type === "update" ? "Update" : "Install"} (${esc(pending.scope)})`}
+        ${confirmLabel}
       </button>`
     : `<div class="mp-btn-group">
-        <button type="button" class="mp-btn mp-btn-primary" data-confirm-install="${esc(summary.id)}" data-scope="global" ${isBusy ? "disabled" : ""}>
+        <button type="button" class="mp-btn mp-btn-primary" data-confirm-install="${esc(summary.id)}" data-scope="global" title="Verify and install plugin globally for all workspaces" ${isBusy ? "disabled" : ""}>
           ${isBusy ? "Working..." : "Install Global"}
         </button>
-        <button type="button" class="mp-btn" data-confirm-install="${esc(summary.id)}" data-scope="project" ${isBusy ? "disabled" : ""}>
+        <button type="button" class="mp-btn" data-confirm-install="${esc(summary.id)}" data-scope="project" title="Verify and install plugin in the active project workspace" ${isBusy ? "disabled" : ""}>
           Install Project
         </button>
       </div>`;
 
   container.innerHTML = `
     <div class="mp-drawer-head">
-      <div>
-        <h2 style="margin:0;font-size:15px">${esc(summary.name)}</h2>
-        <div class="mp-muted" style="font-size:12px">${esc(summary.id)} &middot; v${esc(summary.version)} &middot; ${esc(summary.license)}</div>
+      <div class="mp-drawer-ident">
+        ${renderPluginIcon(summary, "mp-plugin-icon-lg")}
+        <div class="mp-drawer-title-meta">
+          <h2 style="margin:0;font-size:15px">${esc(summary.name)}</h2>
+          <div class="mp-muted" style="font-size:12px">${esc(summary.id)} &middot; v${esc(summary.version)} &middot; ${esc(summary.license || "Unknown license")}</div>
+        </div>
       </div>
-      <button type="button" class="mp-btn" data-close-drawer>Close</button>
+      <button type="button" class="mp-btn" data-close-drawer title="Close detail drawer (Esc)">Close</button>
     </div>
 
     <div class="mp-tabs" style="padding:8px 16px;border-bottom:1px solid var(--mp-border)">
-      <button type="button" class="mp-tab ${state.drawer.subTab === "audit" ? "is-active" : ""}" data-drawer-tab="audit">
+      <button type="button" class="mp-tab ${state.drawer.subTab === "audit" ? "is-active" : ""}" data-drawer-tab="audit" title="View permissions, collisions, pre-flight checks, and static scan findings">
         Security Audit (${findings.length})
       </button>
-      <button type="button" class="mp-tab ${state.drawer.subTab === "overview" ? "is-active" : ""}" data-drawer-tab="overview">
+      <button type="button" class="mp-tab ${state.drawer.subTab === "overview" ? "is-active" : ""}" data-drawer-tab="overview" title="Read the plugin README, release notes, and repository links">
         README &amp; Notes
       </button>
     </div>
@@ -267,8 +361,8 @@ export function renderDrawer() {
     <div class="mp-drawer-body">${bodyHtml}</div>
 
     <div class="mp-drawer-foot">
-      <span class="mp-badge mp-risk-${esc(summary.security?.riskTier || "unverified")}">
-        Risk: ${esc(summary.security?.riskTier || "unverified")}
+      <span class="mp-badge mp-risk-${esc(riskTier)}" title="${esc(riskDescription(riskTier))}">
+        Risk: ${esc(riskTier)}
       </span>
       ${confirmAction}
     </div>

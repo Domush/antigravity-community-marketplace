@@ -4,6 +4,7 @@ import {
   applyHostFonts,
   applyHostStyleVariables,
 } from "@modelcontextprotocol/ext-apps";
+import { isSafeHttpUrl } from "./helpers.js";
 
 const WORKSPACE_INIT_TIMEOUT_MS = 1500;
 
@@ -21,16 +22,6 @@ function areStringArraysEqual(a, b) {
     if (a[i] !== b[i]) return false;
   }
   return true;
-}
-
-function isSafeHttpUrl(rawUrl) {
-  if (typeof rawUrl !== "string" || !rawUrl.trim()) return false;
-  try {
-    const parsed = new URL(rawUrl.trim());
-    return parsed.protocol === "https:" || parsed.protocol === "http:";
-  } catch {
-    return false;
-  }
 }
 
 function syncHostStyles(ctx) {
@@ -72,7 +63,7 @@ function readInitialWorkspaceUrisWithTimeout() {
 }
 
 export function createHostBridge({
-  clientVersion = "1.0.2",
+  clientVersion = "1.0.3",
   onToolResult,
   onWorkspaceChange,
 } = {}) {

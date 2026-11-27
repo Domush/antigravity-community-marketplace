@@ -1,42 +1,24 @@
+import { compareSemver, parseSemver } from "../../server/lib/semver.mjs";
+import { ELEVATED_CAPABILITIES, RISK_ORDER } from "./security-meta.js";
+
 // ---------------------------------------------------------------------------
 // Configuration, Display Labels, Application State & Pure Helpers
 // ---------------------------------------------------------------------------
 export const REGISTRY_ISSUE_REPO = "https://github.com/Domush/antigravity-plugin-registry";
 
-export const RISK_ORDER = { low: 0, elevated: 1, high: 2, unverified: 3 };
-
-export const CAPABILITY_LABELS = {
-  runs_shell_hooks: "Shell Lifecycle Hooks",
-  runs_prompt_hooks: "Prompt Lifecycle Hooks",
-  unpinned_remote_runtime: "Unpinned Remote Package (npx/uvx)",
-  prompt_injection_suspect: "Suspicious Prompt Directives",
-  credential_access: "Accesses Credential Paths",
-  process_spawn: "Spawns OS Processes",
-  dynamic_code_exec: "Dynamic Code Execution (eval)",
-  mcp_local_exec: "Local Executable (stdio MCP)",
-  network_external_mcp: "Remote External MCP",
-  network_outbound: "Outbound Network Calls",
-  fs_write_workspace: "Writes Workspace Files",
-  fs_read_workspace: "Reads Workspace Files",
-  fs_outside_workspace: "Reads Outside Workspace",
-  contains_minified: "Minified / Obfuscated Code",
-  prompt_mentions_shell: "Prompt Requests Shell Commands",
-  prompt_rules_only: "Prompt / Rules Only",
-};
-
-export const ELEVATED_CAPABILITIES = new Set([
-  "runs_shell_hooks",
-  "unpinned_remote_runtime",
-  "prompt_injection_suspect",
-  "credential_access",
-  "process_spawn",
-  "dynamic_code_exec",
-  "mcp_local_exec",
-  "network_external_mcp",
-  "network_outbound",
-  "fs_outside_workspace",
-  "contains_minified",
-]);
+export {
+  CAPABILITY_DESCRIPTIONS,
+  CAPABILITY_LABELS,
+  capDescription,
+  capLabel,
+  ELEVATED_CAPABILITIES,
+  formatFindingSnippet,
+  inferFindingCapability,
+  RISK_DESCRIPTIONS,
+  RISK_ORDER,
+  riskDescription,
+  severityDescription,
+} from "./security-meta.js";
 
 export const state = {
   catalog: { plugins: [], generatedAt: null },
@@ -45,11 +27,12 @@ export const state = {
   installed: [], // [{ id, slug, scope: 'global'|'project', version, sha, capabilities, manual }]
   workspaceRoots: [],
   activeProjectRoot: "",
-  clientVersion: "1.0.2",
+  clientVersion: "1.0.3",
   platform: "",
   dismissedSelfUpdate: false,
   requiresReload: false,
   busyIds: new Set(),
+  expandedIds: new Set(),
   errorMessage: "",
 
   // View controls
@@ -61,6 +44,7 @@ export const state = {
   sort: "stars",
   noCredsOnly: false,
   showHidden: false,
+  filtersOpen: false,
 
   // Drawer state
   drawer: {
@@ -83,26 +67,68 @@ export function esc(value) {
     .replaceAll("'", "&#39;");
 }
 
-export function capLabel(key) {
-  return CAPABILITY_LABELS[key] || key.replaceAll("_", " ");
+export function isSafeHttpUrl(rawUrl) {
+  if (typeof rawUrl !== "string" || !rawUrl.trim()) return false;
+  try {
+    const parsed = new URL(rawUrl.trim());
+    return parsed.protocol === "https:" || parsed.protocol === "http:";
+  } catch {
+    return false;
+  }
 }
 
-export function compareSemver(a, b) {
-  const pa = String(a || "0.0.0").split("-")[0].split(".").map(Number);
-  const pb = String(b || "0.0.0").split("-")[0].split(".").map(Number);
-  for (let i = 0; i < 3; i++) {
-    const diff = (pa[i] || 0) - (pb[i] || 0);
-    if (diff !== 0) return diff;
+export function getPluginInitials(plugin) {
+  const raw = String(plugin?.name || plugin?.id?.split("/")[1] || plugin?.id || "PL").trim();
+  const words = raw.split(/[\s_-]+/).filter(Boolean);
+  if (words.length >= 2) {
+    return `${words[0][0]}${words[1][0]}`.toUpperCase();
   }
-  return 0;
+  const single = (words[0] || "PL").replace(/[^A-Za-z0-9]/g, "");
+  return (single.slice(0, 2) || "PL").toUpperCase();
 }
+
+export function getPluginIconUrl(plugin) {
+  if (isSafeHttpUrl(plugin?.iconUrl)) return plugin.iconUrl.trim();
+  if (isSafeHttpUrl(plugin?.author?.avatarUrl)) return plugin.author.avatarUrl.trim();
+  return "";
+}
+
+export function renderPluginIcon(plugin, sizeClass = "") {
+  const initials = getPluginInitials(plugin);
+  const iconUrl = getPluginIconUrl(plugin);
+  const cls = sizeClass ? `mp-plugin-icon ${sizeClass}` : "mp-plugin-icon";
+  return `
+    <span class="${cls}" aria-hidden="true">
+      <span class="mp-plugin-monogram">${esc(initials)}</span>
+      ${
+        iconUrl
+          ? `<img class="mp-plugin-icon-img" src="${esc(iconUrl)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" />`
+          : ""
+      }
+    </span>
+  `;
+}
+
+export function getActiveFilterCount() {
+  let count = 0;
+  if (state.category !== "all") count += 1;
+  if (state.surface !== "all") count += 1;
+  if (state.maxRisk !== "all") count += 1;
+  if (state.noCredsOnly) count += 1;
+  return count;
+}
+
+export { compareSemver, parseSemver };
 
 export function getSelfUpdateInfo() {
   const mc = state.catalog?.marketplaceClient;
   if (!mc?.latestVersion || !state.clientVersion) return null;
-  if (compareSemver(mc.latestVersion, state.clientVersion) <= 0) return null;
-  const unsupported =
-    Boolean(mc.minSupportedVersion) && compareSemver(state.clientVersion, mc.minSupportedVersion) < 0;
+  const latestCmp = compareSemver(mc.latestVersion, state.clientVersion);
+  if (latestCmp === null || latestCmp <= 0) return null;
+  const minCmp = mc.minSupportedVersion
+    ? compareSemver(state.clientVersion, mc.minSupportedVersion)
+    : null;
+  const unsupported = minCmp !== null && minCmp < 0;
   return { ...mc, unsupported };
 }
 
@@ -111,13 +137,109 @@ export function getInstallsFor(pluginId) {
   return state.installed.filter((i) => (i.id || "").toLowerCase() === lower);
 }
 
-export function hasUpdateAvailable(plugin) {
-  const installs = getInstallsFor(plugin.id);
-  return installs.some(
-    (i) =>
-      (!i.manual && i.sha && plugin.release?.sha && i.sha !== plugin.release.sha) ||
-      i.matchTier === "repo_origin"
+export function classifyInstallStatus(install, plugin) {
+  const installedVersion = typeof install?.version === "string" ? install.version.trim() : "";
+  const registryVersion = typeof plugin?.version === "string" ? plugin.version.trim() : "";
+  const cmp = compareSemver(installedVersion, registryVersion);
+
+  const isAhead = cmp !== null && cmp > 0;
+  const isBehind = cmp !== null && cmp < 0;
+  const isSameVersion = cmp === 0;
+  const isUnversioned = cmp === null;
+  const direction = isAhead
+    ? "downgrade"
+    : isBehind
+      ? "upgrade"
+      : isSameVersion
+        ? "same"
+        : "unversioned";
+
+  const isRepoOrigin = install?.matchTier === "repo_origin";
+  const hasShaMismatch = Boolean(
+    !install?.manual &&
+      install?.sha &&
+      plugin?.release?.sha &&
+      install.sha !== plugin.release.sha
   );
+  const hasUpdate = Boolean(
+    (hasShaMismatch && !isAhead) ||
+      (isRepoOrigin &&
+        (isBehind || (parseSemver(installedVersion) === null && Boolean(registryVersion))))
+  );
+
+  return {
+    direction,
+    isAhead,
+    isBehind,
+    isSameVersion,
+    isUnversioned,
+    isRepoOrigin,
+    hasShaMismatch,
+    hasUpdate,
+    installedVersion,
+    registryVersion,
+  };
+}
+
+export function getInstallActionMeta(install, plugin) {
+  if (!install || !plugin) return null;
+  const status = classifyInstallStatus(install, plugin);
+  if (!status.isRepoOrigin && !status.hasShaMismatch && !status.isAhead) {
+    return null;
+  }
+
+  const action = status.isRepoOrigin ? "review-adopt" : "review-update";
+  const regLabel = status.registryVersion || "registry";
+  const instLabel = status.installedVersion;
+
+  if (status.isAhead) {
+    return {
+      ...status,
+      action,
+      label: `Adopt Registry v${regLabel} (Downgrade)`,
+      buttonClass: "mp-btn",
+      isPrimary: false,
+      isDowngrade: true,
+      badgeLabel: `Local v${instLabel} Ahead`,
+    };
+  }
+
+  if (status.direction === "same") {
+    return {
+      ...status,
+      action,
+      label: status.isRepoOrigin
+        ? `Adopt & Verify (v${regLabel})`
+        : `Re-sync Verified (v${regLabel})`,
+      buttonClass: status.isRepoOrigin ? "mp-btn" : "mp-btn mp-btn-primary",
+      isPrimary: !status.isRepoOrigin,
+      isDowngrade: false,
+      badgeLabel: null,
+    };
+  }
+
+  const prefix = status.isRepoOrigin ? "Adopt & Update" : "Update";
+  const label = instLabel
+    ? `${prefix} ${instLabel} \u2192 ${regLabel}`
+    : status.isRepoOrigin
+      ? `Adopt & Verify (v${regLabel})`
+      : `Re-sync Verified (v${regLabel})`;
+
+  return {
+    ...status,
+    action,
+    label,
+    buttonClass: "mp-btn mp-btn-primary",
+    isPrimary: true,
+    isDowngrade: false,
+    badgeLabel: null,
+  };
+}
+
+export function hasUpdateAvailable(plugin) {
+  if (!plugin?.id) return false;
+  const installs = getInstallsFor(plugin.id);
+  return installs.some((inst) => classifyInstallStatus(inst, plugin).hasUpdate);
 }
 
 export function getRevokedInstalls() {

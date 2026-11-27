@@ -8,6 +8,9 @@ Thumbs.db
 *.db-shm
 .context-mode/
 dist/
+!ui/dist/
+ui/dist/*
+!ui/dist/marketplace.html
 coverage/
 test-results.xml
 .tmp/

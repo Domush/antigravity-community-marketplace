@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "community-marketplace": {
+      "command": "node",
+      "args": [
+        "${PLUGIN_ROOT}/server/index.mjs",
+        "--data-dir",
+        "${PLUGIN_DATA}",
+        "--registry-url",
+        "https://domush.github.io/antigravity-plugin-registry"
+      ]
+    }
+  }
+}

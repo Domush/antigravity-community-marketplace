@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Community Plugin Marketplace</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <div id="app" class="mp-shell">
+      <!-- Top Alerts -->
+      <div id="alerts" class="mp-alerts" aria-live="polite"></div>
+
+      <!-- Sticky Header -->
+      <header class="mp-header">
+        <div class="mp-header-top">
+          <div class="mp-title-group">
+            <h1>Community Plugins</h1>
+            <span id="catalog-meta" class="mp-muted mp-meta">Loading catalog...</span>
+          </div>
+          <div class="mp-header-actions">
+            <label class="mp-project-pill" title="Target folder for Project installs (.agents/plugins)">
+              <span class="mp-pill-label">Project:</span>
+              <select id="project-select" aria-label="Active project root"></select>
+              <button id="btn-custom-project" type="button" class="mp-icon-btn" title="Set custom project path">
+                Edit
+              </button>
+            </label>
+            <button id="btn-refresh" type="button" class="mp-btn mp-btn-secondary">
+              Check Updates
+            </button>
+          </div>
+        </div>
+
+        <!-- Navigation Tabs -->
+        <nav class="mp-tabs" role="tablist" aria-label="Marketplace views">
+          <button class="mp-tab is-active" data-tab="browse" role="tab" aria-selected="true">
+            Browse <span class="mp-count" id="count-browse">0</span>
+          </button>
+          <button class="mp-tab" data-tab="installed" role="tab" aria-selected="false">
+            Installed <span class="mp-count" id="count-installed">0</span>
+          </button>
+          <button class="mp-tab" data-tab="updates" role="tab" aria-selected="false">
+            Updates <span class="mp-count mp-count-accent" id="count-updates">0</span>
+          </button>
+          <button class="mp-tab" data-tab="favorites" role="tab" aria-selected="false">
+            Favorites <span class="mp-count" id="count-favorites">0</span>
+          </button>
+          <label class="mp-toggle-hidden">
+            <input type="checkbox" id="chk-show-hidden" />
+            <span>Show Hidden</span>
+          </label>
+        </nav>
+
+        <!-- Search & Filter Bar -->
+        <div class="mp-controls">
+          <input
+            id="search-input"
+            class="mp-input mp-search"
+            type="search"
+            placeholder="Search plugins, authors, tags..."
+            autocomplete="off"
+          />
+          <select id="filter-category" class="mp-select" aria-label="Filter by category">
+            <option value="all">All Categories</option>
+          </select>
+          <select id="filter-surface" class="mp-select" aria-label="Filter by surface">
+            <option value="all">All Surfaces</option>
+            <option value="sidebar_ui">Has Sidebar UI</option>
+            <option value="prompt_only">Prompt / Rules Only</option>
+            <option value="mcp_stdio">Local MCP Server</option>
+            <option value="hooks">Shell Lifecycle Hooks</option>
+          </select>
+          <select id="filter-risk" class="mp-select" aria-label="Maximum risk tier">
+            <option value="all">Any Risk Tier</option>
+            <option value="low">Low Risk Only</option>
+            <option value="elevated">Low + Elevated</option>
+          </select>
+          <select id="sort-select" class="mp-select" aria-label="Sort plugins">
+            <option value="stars">Sort: Stars</option>
+            <option value="updated">Sort: Recently Updated</option>
+            <option value="risk">Sort: Lowest Risk</option>
+            <option value="name">Sort: Name (A-Z)</option>
+          </select>
+          <label class="mp-chip-check">
+            <input type="checkbox" id="chk-no-creds" />
+            <span>No API Keys</span>
+          </label>
+        </div>
+      </header>
+
+      <!-- Responsive Plugin Card Grid -->
+      <main id="plugin-grid" class="mp-grid" aria-live="polite"></main>
+    </div>
+
+    <!-- Slide-Over Audit & Permission-Diff Drawer -->
+    <div id="drawer-backdrop" class="mp-backdrop" hidden></div>
+    <aside id="audit-drawer" class="mp-drawer" aria-hidden="true" role="dialog" aria-modal="true">
+      <div id="drawer-content" class="mp-drawer-inner"></div>
+    </aside>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

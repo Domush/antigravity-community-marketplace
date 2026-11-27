@@ -2,6 +2,11 @@
 
 All notable changes to `antigravity-community-marketplace` will be documented in this file.
 
+## [1.0.5] - 2026-11-27
+
+### Improved
+- **Expanded Plugin Discovery Documentation:** Updated plugin submission guidance to cover both `agy-plugin` and `antigravity-plugin` repository topics.
+
 ## [1.0.4] - 2026-11-27
 
 ### Improved

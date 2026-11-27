@@ -63,7 +63,7 @@ function readInitialWorkspaceUrisWithTimeout() {
 }
 
 export function createHostBridge({
-  clientVersion = "1.0.4",
+  clientVersion = "1.0.5",
   onToolResult,
   onWorkspaceChange,
 } = {}) {

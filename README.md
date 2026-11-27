@@ -99,5 +99,5 @@ Every plugin in the registry is scanned by an automated, open-source GitHub Acti
 
 ## Submitting or Reporting a Plugin
 
-* **Submit / Refresh a Plugin:** Tag your public GitHub repository with `agy-plugin` and open a submission issue on [`antigravity-plugin-registry`](https://github.com/Domush/antigravity-plugin-registry) for immediate indexing.
+* **Submit / Refresh a Plugin:** Tag your public GitHub repository with `agy-plugin` or `antigravity-plugin` and open a submission issue on [`antigravity-plugin-registry`](https://github.com/Domush/antigravity-plugin-registry) for immediate indexing.
 * **Report a Malicious Plugin:** Click **Report** inside any plugin's detail drawer to open a pre-filled issue with the pinned commit SHA.

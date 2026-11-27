@@ -9,6 +9,8 @@
 
 > **Disclaimer:** This is an independent community project and is not affiliated with or endorsed by Google. Always review audit findings before installing elevated or high-risk plugins.
 
+<img width="853" height="941" alt="image" src="https://github.com/user-attachments/assets/104c6fcf-9006-4cca-862e-b3325e9f994d" />
+
 ---
 
 ## Requirements

@@ -92,10 +92,10 @@ describe("windows-process helpers & spawnShutdownSwapWorker", () => {
   });
 
   it("resolves standalone node.exe when execPath is Antigravity.exe and falls back cleanly", () => {
-    const winDirNode = path.join("C:\\Program Files\\nodejs", "node.exe");
+    const winDirNode = path.win32.join("C:\\Program Files\\nodejs", "node.exe");
     const resolved = resolveWindowsNodeExecutable({
       execPath: "C:\\Antigravity\\Antigravity.exe",
-      env: { PATH: '"C:\\EmptyDir"' + path.delimiter + "C:\\Program Files\\nodejs" },
+      env: { PATH: '"C:\\EmptyDir"' + path.win32.delimiter + "C:\\Program Files\\nodejs" },
       existsSyncFn: (p) => p === winDirNode,
       statSyncFn: () => ({ isFile: () => true }),
     });

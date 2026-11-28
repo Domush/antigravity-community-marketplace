@@ -39,7 +39,7 @@ function isExistingFile(filePath, existsSyncFn, statSyncFn) {
 
 export function isNodeExecutablePath(execPath) {
   if (typeof execPath !== "string" || !execPath.trim()) return false;
-  const base = path.basename(execPath.trim()).toLowerCase();
+  const base = path.win32.basename(execPath.trim()).toLowerCase();
   return base === "node.exe" || base === "node";
 }
 
@@ -59,21 +59,21 @@ export function resolveWindowsNodeExecutable({
   }
 
   const pathVar = env?.PATH || env?.Path || "";
-  for (const rawDir of pathVar.split(path.delimiter)) {
+  for (const rawDir of pathVar.split(path.win32.delimiter)) {
     const dir = rawDir.trim().replace(/^"|"$/g, "");
     if (!dir) continue;
-    const candidate = path.join(dir, "node.exe");
+    const candidate = path.win32.join(dir, "node.exe");
     if (isExistingFile(candidate, existsSyncFn, statSyncFn)) {
       return candidate;
     }
   }
 
   const standardCandidates = [
-    env?.NVM_SYMLINK ? path.join(env.NVM_SYMLINK, "node.exe") : null,
-    env?.ProgramFiles ? path.join(env.ProgramFiles, "nodejs", "node.exe") : null,
-    env?.["ProgramFiles(x86)"] ? path.join(env["ProgramFiles(x86)"], "nodejs", "node.exe") : null,
-    env?.LOCALAPPDATA ? path.join(env.LOCALAPPDATA, "Programs", "nodejs", "node.exe") : null,
-    env?.LOCALAPPDATA ? path.join(env.LOCALAPPDATA, "Volta", "bin", "node.exe") : null,
+    env?.NVM_SYMLINK ? path.win32.join(env.NVM_SYMLINK, "node.exe") : null,
+    env?.ProgramFiles ? path.win32.join(env.ProgramFiles, "nodejs", "node.exe") : null,
+    env?.["ProgramFiles(x86)"] ? path.win32.join(env["ProgramFiles(x86)"], "nodejs", "node.exe") : null,
+    env?.LOCALAPPDATA ? path.win32.join(env.LOCALAPPDATA, "Programs", "nodejs", "node.exe") : null,
+    env?.LOCALAPPDATA ? path.win32.join(env.LOCALAPPDATA, "Volta", "bin", "node.exe") : null,
   ];
   for (const candidate of standardCandidates) {
     if (candidate && isExistingFile(candidate, existsSyncFn, statSyncFn)) {

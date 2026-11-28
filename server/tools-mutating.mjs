@@ -98,4 +98,41 @@ export function registerMutatingTools(server, { service }) {
       }
     }
   );
+
+  // -------------------------------------------------------------------------
+  // 9. App-Only Tool: Retry Pending Staged Updates
+  // -------------------------------------------------------------------------
+  server.registerTool(
+    "mp_apply_pending_updates",
+    {
+      title: "Apply Pending Staged Updates",
+      description: "Retries applying any staged plugin updates once active file locks have cleared.",
+      inputSchema: TOOL_SCHEMAS.mp_apply_pending_updates,
+      _meta: { ui: { visibility: ["app"] } },
+    },
+    async () => {
+      try {
+        return toToolResponse(await service.applyPending());
+      } catch (err) {
+        return toolError(`Pending update apply failed: ${err.message}`);
+      }
+    }
+  );
+
+  server.registerTool(
+    "mp_cancel_pending_updates",
+    {
+      title: "Cancel Pending Staged Updates",
+      description: "Cancels pending staged plugin updates and cleans up staged files.",
+      inputSchema: TOOL_SCHEMAS.mp_cancel_pending_updates,
+      _meta: { ui: { visibility: ["app"] } },
+    },
+    async (args) => {
+      try {
+        return toToolResponse(await service.cancelPending(args));
+      } catch (err) {
+        return toolError(`Pending update cancellation failed: ${err.message}`);
+      }
+    }
+  );
 }

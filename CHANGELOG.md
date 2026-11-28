@@ -2,6 +2,16 @@
 
 All notable changes to `antigravity-community-marketplace` will be documented in this file.
 
+## [1.0.8] - 2026-11-28
+
+### Improved
+- **Seamless Active Plugin Updates:** Automatically updates active plugin files in place when folders are busy and stages updates in an isolated staging area to finish automatically when you restart the Antigravity App, using clean author-and-plugin folder names and allowing pending updates to be cancelled cleanly.
+- **Reliable Background Update Completion:** Launches an independent background updater using your system Node runtime that waits until all Antigravity processes exit before completing staged plugin updates, keeps sidebar and background storage unified, prevents duplicate updaters from interrupting active updates, and records diagnostic logs for troubleshooting.
+- **Plugin Manager Icon & Display Name:** Updated the plugin manifest so Antigravity's Plugins view displays the Community Plugins title and icon.
+- **Rich README Rendering (Images, Tables & GitHub-Flavored Markdown):** Uses a bundled Markdown renderer with strict sanitization to display README images, badges, tables, nested lists, and release notes cleanly inside the plugin details drawer.
+- **Clearer Update Review & Scope Safety:** Displays all release notes since your installed version alongside permission diffs when reviewing updates, automatically closes the detail drawer after confirming an update, places a Back button in the top-left of the detail drawer with the README & Notes tab first, shows a prominent amber pending-restart notice, prevents duplicate pending updates or repeated update clicks, enforces single-scope installs with clear warnings, treats matched local plugins like standard updates, shows update actions directly in Details, and surfaces action errors inside the drawer.
+- **Safer Installed Plugin Controls:** Highlights **Disable** (or **Enable** when paused) as the default card action for up-to-date installed plugins—with **Update** kept primary whenever an update is available—and moves **Uninstall** into the action dropdown menu to prevent accidental removals.
+
 ## [1.0.7] - 2026-11-27
 
 ### Added

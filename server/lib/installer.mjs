@@ -1,18 +1,33 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
-import { createWriteStream } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { Readable, Transform } from "node:stream";
-import { pipeline } from "node:stream/promises";
-import zlib from "node:zlib";
-import tar from "tar-stream";
-import { USER_AGENT } from "./catalog.mjs";
+import { syncPluginDirectory } from "./cli-sync.mjs";
+import {
+  computeContentTreeSha256,
+  extractVerifiedTarball,
+  resolveInside,
+} from "./tarball.mjs";
 
-const MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
-const MAX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024;
-const MAX_FILES = 5000;
-const TARBALL_FETCH_TIMEOUT_MS = 60_000;
+export { computeContentTreeSha256 };
+
+const BUSY_LOCK_CODES = new Set(["EPERM", "EBUSY", "ENOTEMPTY"]);
+
+/** Return true when err represents an OS file/directory lock or busy-handle failure. */
+export function isBusyLockError(err) {
+  return Boolean(err && (err instanceof PluginBusyLockError || BUSY_LOCK_CODES.has(err.code)));
+}
+
+/** Error thrown when an active process locks a plugin file or folder during swap. */
+export class PluginBusyLockError extends Error {
+  constructor(message, { code = "EBUSY", targetPath = null, cause = null } = {}) {
+    super(message);
+    this.name = "PluginBusyLockError";
+    this.code = code;
+    this.targetPath = targetPath;
+    if (cause) this.cause = cause;
+  }
+}
 
 export function getGlobalPluginsDir() {
   return path.join(os.homedir(), ".gemini", "config", "plugins");
@@ -45,197 +60,148 @@ function assertSafeSlug(slug) {
   }
 }
 
-/** Convert "owner/repo" into a safe directory slug ("owner--repo"). */
-export function pluginSlug(id) {
+/** Convert "owner/repo" (and optional short pluginName) into a safe directory slug ("owner--name"). */
+export function pluginSlug(id, pluginName = null) {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(id)) {
     throw new Error(`Invalid plugin ID: ${id}`);
   }
-  return id.replace("/", "--").toLowerCase();
-}
-
-// ---------------------------------------------------------------------------
-// Identical contentTreeSha256 Framing as scripts/crawl.mjs
-// ---------------------------------------------------------------------------
-async function collectRelativeFiles(
-  rootDir,
-  currentDir = rootDir,
-  out = [],
-  { excludeDotGit = false } = {}
-) {
-  const entries = await fs.readdir(currentDir, { withFileTypes: true });
-  for (const entry of entries) {
-    if (excludeDotGit && entry.name === ".git") continue;
-    const full = path.join(currentDir, entry.name);
-    if (entry.isDirectory()) {
-      await collectRelativeFiles(rootDir, full, out, { excludeDotGit });
-    } else if (entry.isFile()) {
-      out.push(path.relative(rootDir, full).split(path.sep).join("/"));
-    }
+  const [owner, repo] = id.split("/");
+  let shortName = "";
+  if (typeof pluginName === "string" && pluginName.trim()) {
+    shortName = pluginName
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_.-]+/g, "-")
+      .replace(/^[.-]+|[.-]+$/g, "");
   }
-  return out;
-}
-
-export async function computeContentTreeSha256(rootDir, { excludeDotGit = false } = {}) {
-  const files = await collectRelativeFiles(rootDir, rootDir, [], { excludeDotGit });
-  files.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-
-  const hash = crypto.createHash("sha256");
-  const nul = Buffer.from([0]);
-
-  for (const relPath of files) {
-    const bytes = await fs.readFile(path.join(rootDir, ...relPath.split("/")));
-    hash.update(relPath, "utf8");
-    hash.update(nul);
-    hash.update(String(bytes.length), "utf8");
-    hash.update(nul);
-    hash.update(bytes);
-    hash.update(nul);
+  if (!shortName || shortName === "." || shortName === "..") {
+    shortName = repo.toLowerCase();
   }
-  return hash.digest("hex");
+  const slug = `${owner.toLowerCase()}--${shortName}`;
+  assertSafeSlug(slug);
+  return slug;
 }
 
 // ---------------------------------------------------------------------------
-// Zip-Slip-Safe & Bomb-Hardened Tarball Extraction
+// Atomic Same-Volume Publish with Cross-Device (EXDEV) & Busy-Lock Fallbacks
 // ---------------------------------------------------------------------------
-function stripTopLevelDir(rawName) {
-  const normalized = rawName.replaceAll("\\", "/").replace(/^\.\/+/, "");
-  if (!normalized || normalized === "pax_global_header") return null;
-  const idx = normalized.indexOf("/");
-  if (idx === -1) return null;
-  const rest = normalized.slice(idx + 1);
-  return rest.length > 0 ? rest : null;
-}
-
-function resolveInside(rootDir, relPath) {
-  const parts = relPath.split("/");
-  if (relPath.startsWith("/") || parts.some((p) => p === "..")) {
-    throw new Error(`Zip-slip path rejected: ${relPath}`);
-  }
-  const dest = path.resolve(rootDir, relPath);
-  const prefix = rootDir.endsWith(path.sep) ? rootDir : `${rootDir}${path.sep}`;
-  if (dest !== rootDir && !dest.startsWith(prefix)) {
-    throw new Error(`Path escapes staging directory: ${relPath}`);
-  }
-  return dest;
-}
-
-async function extractVerifiedTarball(tarballUrl, stageDir, expectedTreeSha256) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TARBALL_FETCH_TIMEOUT_MS);
-  try {
-    const res = await fetch(tarballUrl, {
-      headers: { "User-Agent": USER_AGENT },
-      redirect: "follow",
-      signal: controller.signal,
-    });
-    if (!res.ok || !res.body) {
-      throw new Error(`Download failed (${res.status}) for ${tarballUrl}`);
-    }
-
-    let compressedBytes = 0;
-    let uncompressedBytes = 0;
-    let fileCount = 0;
-
-    const sizeGuard = new Transform({
-      transform(chunk, _enc, cb) {
-        compressedBytes += chunk.length;
-        if (compressedBytes > MAX_ARCHIVE_BYTES) {
-          cb(new Error("Archive exceeds 25 MB compressed limit."));
-          return;
-        }
-        cb(null, chunk);
-      },
-    });
-
-    const extract = tar.extract();
-    extract.on("entry", (header, stream, next) => {
-      const run = async () => {
-        if (header.type === "symlink" || header.type === "link") {
-          stream.resume();
-          throw new Error(`Refused archive link entry: ${header.name}`);
-        }
-        const rel = stripTopLevelDir(header.name);
-        if (!rel) {
-          stream.resume();
-          return;
-        }
-        const dest = resolveInside(stageDir, rel);
-
-        if (header.type === "directory") {
-          await fs.mkdir(dest, { recursive: true });
-          stream.resume();
-          return;
-        }
-        if (header.type !== "file") {
-          stream.resume();
-          return;
-        }
-
-        fileCount += 1;
-        if (fileCount > MAX_FILES) {
-          stream.resume();
-          throw new Error("Archive exceeds 5,000 file limit.");
-        }
-
-        await fs.mkdir(path.dirname(dest), { recursive: true });
-        const uncompressedGuard = new Transform({
-          transform(chunk, _enc, cb) {
-            uncompressedBytes += chunk.length;
-            if (uncompressedBytes > MAX_UNCOMPRESSED_BYTES) {
-              cb(new Error("Archive exceeds 50 MB uncompressed limit."));
-              return;
-            }
-            cb(null, chunk);
-          },
-        });
-        await pipeline(stream, uncompressedGuard, createWriteStream(dest, { flags: "wx" }));
-      };
-
-      run().then(() => next()).catch((err) => {
-        stream.destroy(err);
-        next(err);
-      });
-    });
-
-    await pipeline(Readable.fromWeb(res.body), sizeGuard, zlib.createGunzip(), extract);
-
-    // Cryptographic integrity check BEFORE moving into the live plugins folder
-    const actualHash = await computeContentTreeSha256(stageDir);
-    if (actualHash !== expectedTreeSha256) {
-      throw new Error(
-        `Integrity mismatch: expected contentTreeSha256 ${expectedTreeSha256.slice(0, 12)}..., got ${actualHash.slice(0, 12)}...`
-      );
-    }
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Atomic Same-Volume Publish with Cross-Device (EXDEV) Fallback
-// ---------------------------------------------------------------------------
-async function moveDirAtomic(srcDir, destDir) {
+export async function moveDirAtomic(srcDir, destDir, options = {}) {
+  const { allowInPlaceSync = true, fsOps = fs, syncDirFn = syncPluginDirectory } = options;
   const backupDir = `${destDir}.bak.${Date.now()}`;
-  const hadExisting = await fs.access(destDir).then(() => true).catch(() => false);
+  const hadExisting = await fsOps.access(destDir).then(() => true).catch(() => false);
+
+  if (hadExisting) {
+    try {
+      await fsOps.rename(destDir, backupDir);
+    } catch (renameErr) {
+      if (allowInPlaceSync && isBusyLockError(renameErr)) {
+        try {
+          syncDirFn(srcDir, destDir);
+          await fsOps.rm(srcDir, { recursive: true, force: true }).catch(() => {});
+          return { syncedInPlace: true };
+        } catch (syncErr) {
+          if (isBusyLockError(syncErr)) {
+            throw new PluginBusyLockError(
+              `Plugin files in "${destDir}" are currently locked by an active process.`,
+              { code: syncErr.code || renameErr.code, targetPath: destDir, cause: syncErr }
+            );
+          }
+          throw syncErr;
+        }
+      }
+      if (isBusyLockError(renameErr)) {
+        throw new PluginBusyLockError(
+          `Plugin folder "${destDir}" is currently locked by an active process.`,
+          { code: renameErr.code, targetPath: destDir, cause: renameErr }
+        );
+      }
+      throw renameErr;
+    }
+  }
 
   try {
-    if (hadExisting) await fs.rename(destDir, backupDir);
+    await fsOps.mkdir(path.dirname(destDir), { recursive: true });
     try {
-      await fs.rename(srcDir, destDir);
+      await fsOps.rename(srcDir, destDir);
     } catch (err) {
       if (err.code !== "EXDEV") throw err;
-      await fs.cp(srcDir, destDir, { recursive: true, force: true });
-      await fs.rm(srcDir, { recursive: true, force: true });
+      await fsOps.cp(srcDir, destDir, { recursive: true, force: true });
+      await fsOps.rm(srcDir, { recursive: true, force: true });
     }
-    if (hadExisting) await fs.rm(backupDir, { recursive: true, force: true });
+    if (hadExisting) {
+      await fsOps.rm(backupDir, { recursive: true, force: true }).catch(() => {});
+    }
+    return { syncedInPlace: false };
   } catch (err) {
     // Roll back previous version if swap fails mid-flight
     if (hadExisting) {
-      await fs.rm(destDir, { recursive: true, force: true }).catch(() => {});
-      await fs.rename(backupDir, destDir).catch(() => {});
+      await fsOps.rm(destDir, { recursive: true, force: true }).catch(() => {});
+      await fsOps.rename(backupDir, destDir).catch(() => {});
+    }
+    if (isBusyLockError(err)) {
+      throw new PluginBusyLockError(
+        `Plugin folder "${srcDir}" is currently locked by an active process.`,
+        { code: err.code, targetPath: srcDir, cause: err }
+      );
     }
     throw err;
   }
+}
+
+async function relocateStageDir(stageDir, pendingStageRoot, fsOps) {
+  if (!pendingStageRoot) return stageDir;
+  const resolvedRoot = path.resolve(pendingStageRoot);
+  if (path.resolve(path.dirname(stageDir)) === resolvedRoot) return stageDir;
+
+  await fsOps.mkdir(resolvedRoot, { recursive: true });
+  const targetStage = path.join(resolvedRoot, path.basename(stageDir));
+  await fsOps.rm(targetStage, { recursive: true, force: true }).catch(() => {});
+  try {
+    await fsOps.rename(stageDir, targetStage);
+  } catch (err) {
+    if (err.code !== "EXDEV" && !isBusyLockError(err)) throw err;
+    try {
+      await fsOps.cp(stageDir, targetStage, { recursive: true, force: true });
+    } catch (cpErr) {
+      await fsOps.rm(targetStage, { recursive: true, force: true }).catch(() => {});
+      throw cpErr;
+    }
+    await fsOps.rm(stageDir, { recursive: true, force: true }).catch(() => {});
+  }
+  return targetStage;
+}
+
+async function stagePendingUpdate({
+  pluginEntry,
+  slug,
+  scope,
+  workspaceRoot,
+  stageDir,
+  pendingStageRoot,
+  finalDir,
+  legacyDir,
+  replaceSlug,
+  fsOps,
+}) {
+  const safeStageDir = await relocateStageDir(stageDir, pendingStageRoot, fsOps);
+  return {
+    status: "pending_restart",
+    pendingUpdate: {
+      id: pluginEntry.id,
+      slug,
+      scope,
+      workspaceRoot: scope === "project" && workspaceRoot ? path.resolve(workspaceRoot) : null,
+      stageDir: safeStageDir,
+      finalDir,
+      legacyDir: legacyDir || null,
+      legacySlug: legacyDir ? replaceSlug : null,
+      version: pluginEntry.version,
+      sha: pluginEntry.release.sha,
+      contentTreeSha256: pluginEntry.release.contentTreeSha256,
+      capabilities: pluginEntry.security.capabilities,
+      stagedAt: new Date().toISOString(),
+    },
+  };
 }
 
 export async function installPlugin({
@@ -245,6 +211,9 @@ export async function installPlugin({
   workspaceRoot,
   replaceSlug = null,
   replaceEnabled = true,
+  pendingStageRoot = null,
+  fsOps = fs,
+  moveDirFn = moveDirAtomic,
 }) {
   const idLower = pluginEntry.id.toLowerCase();
   const shaLower = pluginEntry.release.sha.toLowerCase();
@@ -258,15 +227,20 @@ export async function installPlugin({
   );
   if (blockedSha) throw new Error(`Release SHA blocked by denylist: ${blockedSha.reason}`);
 
-  // 2. Stage inside the target plugins root so rename() stays on the same filesystem
+  // 2. Always stage outside the live plugins root (in pendingStageRoot or OS temp) so
+  // failed or interrupted installs never leave duplicate plugin folders inside plugins/.
   const pluginsRoot = scope === "global"
     ? getGlobalPluginsDir()
     : getProjectPluginsDir(workspaceRoot);
-  await fs.mkdir(pluginsRoot, { recursive: true });
+  await fsOps.mkdir(pluginsRoot, { recursive: true });
 
-  const slug = pluginSlug(pluginEntry.id);
+  const slug = pluginSlug(pluginEntry.id, pluginEntry.pluginName);
   const finalDir = path.join(pluginsRoot, slug);
-  const stageDir = path.join(pluginsRoot, `.${slug}.install.${crypto.randomBytes(6).toString("hex")}.tmp`);
+  const stageRoot = pendingStageRoot
+    ? path.resolve(pendingStageRoot)
+    : path.join(os.tmpdir(), "agy-marketplace-stage");
+  await fsOps.mkdir(stageRoot, { recursive: true });
+  const stageDir = path.join(stageRoot, `.${slug}.install.${crypto.randomBytes(6).toString("hex")}.tmp`);
 
   // Optional migration source when adopting a differently named manual folder (e.g., "context-mode" -> "owner--context-mode")
   let legacyDir = null;
@@ -277,7 +251,7 @@ export async function installPlugin({
     legacyDir = resolveInside(legacyRoot, replaceSlug);
   }
 
-  await fs.mkdir(stageDir, { recursive: true });
+  await fsOps.mkdir(stageDir, { recursive: true });
 
   try {
     await extractVerifiedTarball(
@@ -286,26 +260,65 @@ export async function installPlugin({
       pluginEntry.release.contentTreeSha256
     );
 
-    if (legacyDir && (await fs.access(legacyDir).then(() => true).catch(() => false))) {
+    if (legacyDir && (await fsOps.access(legacyDir).then(() => true).catch(() => false))) {
       legacyBackupDir = `${legacyDir}.migrate.${Date.now()}.bak`;
-      await fs.rename(legacyDir, legacyBackupDir);
+      try {
+        await fsOps.rename(legacyDir, legacyBackupDir);
+      } catch (err) {
+        if (isBusyLockError(err)) {
+          return stagePendingUpdate({
+            pluginEntry,
+            slug,
+            scope,
+            workspaceRoot,
+            stageDir,
+            pendingStageRoot,
+            finalDir,
+            legacyDir,
+            replaceSlug,
+            fsOps,
+          });
+        }
+        throw err;
+      }
     }
 
-    await moveDirAtomic(stageDir, finalDir);
+    try {
+      await moveDirFn(stageDir, finalDir);
+    } catch (err) {
+      if (isBusyLockError(err)) {
+        if (legacyBackupDir && legacyDir) {
+          await fsOps.rename(legacyBackupDir, legacyDir).catch(() => {});
+        }
+        return stagePendingUpdate({
+          pluginEntry,
+          slug,
+          scope,
+          workspaceRoot,
+          stageDir,
+          pendingStageRoot,
+          finalDir,
+          legacyDir,
+          replaceSlug,
+          fsOps,
+        });
+      }
+      throw err;
+    }
 
     // Clean up any stale disabled copy of the same plugin so it is not duplicated
     const staleDisabledDir = path.join(getPluginsDir(scope, workspaceRoot, { enabled: false }), slug);
-    await fs.rm(staleDisabledDir, { recursive: true, force: true }).catch(() => {});
+    await fsOps.rm(staleDisabledDir, { recursive: true, force: true }).catch(() => {});
 
     if (legacyBackupDir) {
-      await fs.rm(legacyBackupDir, { recursive: true, force: true }).catch(() => {});
+      await fsOps.rm(legacyBackupDir, { recursive: true, force: true }).catch(() => {});
     }
   } catch (err) {
     // Restore legacy manual folder if adoption swap fails mid-flight
     if (legacyBackupDir && legacyDir) {
-      await fs.rename(legacyBackupDir, legacyDir).catch(() => {});
+      await fsOps.rename(legacyBackupDir, legacyDir).catch(() => {});
     }
-    await fs.rm(stageDir, { recursive: true, force: true }).catch(() => {});
+    await fsOps.rm(stageDir, { recursive: true, force: true }).catch(() => {});
     throw err;
   }
 
@@ -338,7 +351,17 @@ export async function setPluginEnabled({ slug, scope, workspaceRoot, enabled }) 
     throw new Error(`Plugin "${slug}" is not currently ${enabled ? "disabled" : "enabled"} in ${scope} scope.`);
   }
 
-  await moveDirAtomic(srcDir, destDir);
+  try {
+    await moveDirAtomic(srcDir, destDir, { allowInPlaceSync: false });
+  } catch (err) {
+    if (isBusyLockError(err)) {
+      throw new PluginBusyLockError(
+        `Plugin "${slug}" is currently in use by an active process. Close or restart Antigravity App and try again.`,
+        { code: err.code, targetPath: srcDir, cause: err }
+      );
+    }
+    throw err;
+  }
   return { slug, scope, enabled, fromPath: srcDir, installPath: destDir };
 }
 

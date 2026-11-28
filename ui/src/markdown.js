@@ -1,16 +1,16 @@
+import { Marked } from "marked";
 import { esc } from "./helpers.js";
 
-const TOKEN_RE = /\x00P(\d+)\x00/g;
+const SAFE_CONTAINER_TAGS = new Set([
+  "p", "div", "span", "strong", "b", "em", "i", "del", "s", "code", "pre",
+  "kbd", "sup", "sub", "details", "summary", "h1", "h2", "h3", "h4", "h5", "h6",
+  "ul", "ol", "li", "blockquote", "table", "thead", "tbody", "tr", "th", "td",
+]);
+const SAFE_VOID_TAGS = new Set(["br", "hr"]);
+const ALIGNABLE_TAGS = new Set(["p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "th", "td"]);
+const ATTR_RE = /([a-zA-Z_:][a-zA-Z0-9_.:-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
 
-/**
- * Validate and resolve a Markdown URL safely.
- * Allows http(s) URLs and optional relative repo links pinned to a GitHub commit SHA.
- * Rejects javascript:, data:, vbscript:, protocol-relative //, #-only, and unsafe characters.
- * @param {string} rawUrl
- * @param {{ repoUrl?: string, sha?: string }} [options]
- * @returns {string | null}
- */
-export function sanitizeMarkdownUrl(rawUrl, { repoUrl = "", sha = "" } = {}) {
+function resolveSafeUrl(rawUrl, { repoUrl = "", sha = "", rawContent = false } = {}) {
   let cleaned = String(rawUrl || "").replaceAll("\0", "").trim();
   if (cleaned.startsWith("<") && cleaned.endsWith(">")) cleaned = cleaned.slice(1, -1).trim();
   if (!cleaned || cleaned.startsWith("#") || /[\s"'<>\\]/.test(cleaned)) return null;
@@ -30,9 +30,13 @@ export function sanitizeMarkdownUrl(rawUrl, { repoUrl = "", sha = "" } = {}) {
     try {
       let repoEnd = repoUrl.length;
       while (repoEnd > 0 && repoUrl[repoEnd - 1] === "/") repoEnd--;
-      const base = `${repoUrl.slice(0, repoEnd)}/blob/${encodeURIComponent(trimmedSha)}/`;
+      const repoPath = repoUrl.slice("https://github.com/".length, repoEnd);
+      const base = rawContent
+        ? `https://raw.githubusercontent.com/${repoPath}/${encodeURIComponent(trimmedSha)}/`
+        : `${repoUrl.slice(0, repoEnd)}/blob/${encodeURIComponent(trimmedSha)}/`;
       const resolved = new URL(cleaned.replace(/^\.?\/+/, ""), base);
-      return resolved.origin === "https://github.com" ? resolved.href : null;
+      const expectedOrigin = rawContent ? "https://raw.githubusercontent.com" : "https://github.com";
+      return resolved.origin === expectedOrigin ? resolved.href : null;
     } catch {
       return null;
     }
@@ -40,175 +44,321 @@ export function sanitizeMarkdownUrl(rawUrl, { repoUrl = "", sha = "" } = {}) {
   return null;
 }
 
-function renderLinkElement(labelHtml, safeHref, linkMode) {
+/** Validate and resolve a Markdown link URL safely. */
+export function sanitizeMarkdownUrl(rawUrl, options = {}) {
+  return resolveSafeUrl(rawUrl, { ...options, rawContent: false });
+}
+
+/** Validate and resolve an image URL safely, mapping relative repo paths to raw.githubusercontent.com. */
+export function sanitizeMarkdownImageUrl(rawUrl, options = {}) {
+  return resolveSafeUrl(rawUrl, { ...options, rawContent: true });
+}
+
+function sanitizeImageDimension(rawDim) {
+  if (typeof rawDim !== "string" && typeof rawDim !== "number") return "";
+  const cleaned = String(rawDim).trim().replace(/px$/i, "");
+  return /^\d{1,4}%?$/.test(cleaned) ? cleaned : "";
+}
+
+function parseTagAttributes(attrSource) {
+  const attrs = {};
+  ATTR_RE.lastIndex = 0;
+  let match;
+  while ((match = ATTR_RE.exec(attrSource)) !== null) {
+    const key = match[1].toLowerCase();
+    attrs[key] = match[2] ?? match[3] ?? match[4] ?? "";
+  }
+  return attrs;
+}
+
+function renderSafeImg({ src, alt = "", title = "", width = "", height = "", className = "md-img" }, opts) {
+  const safeSrc = sanitizeMarkdownImageUrl(src, opts);
+  if (!safeSrc) return null;
+  const w = sanitizeImageDimension(width);
+  const h = sanitizeImageDimension(height);
+  return `<img class="${esc(className)}" src="${esc(safeSrc)}" alt="${esc(alt)}"${
+    title ? ` title="${esc(title)}"` : ""
+  }${w ? ` width="${esc(w)}"` : ""}${h ? ` height="${esc(h)}"` : ""} loading="lazy" decoding="async" referrerpolicy="no-referrer" />`;
+}
+
+function renderLinkElement(labelHtml, safeHref, linkMode, titleText = "") {
   if (!safeHref) return labelHtml;
   const hrefAttr = esc(safeHref);
+  const titleAttr = titleText ? esc(titleText) : hrefAttr;
   return linkMode === "button"
-    ? `<button type="button" class="md-link" data-open-url="${hrefAttr}" title="${hrefAttr}">${labelHtml}</button>`
-    : `<a class="md-link" href="${hrefAttr}" target="_blank" rel="noopener noreferrer">${labelHtml}</a>`;
+    ? `<button type="button" class="md-link" data-open-url="${hrefAttr}" title="${titleAttr}">${labelHtml}</button>`
+    : `<a class="md-link" href="${hrefAttr}" target="_blank" rel="noopener noreferrer"${
+        titleText ? ` title="${titleAttr}"` : ""
+      }>${labelHtml}</a>`;
 }
 
-function replacePairedDelimiter(text, delim, openTag, closeTag) {
+function sanitizeHtmlToken(rawHtml, opts, openHtmlLinks) {
+  const tagRe = /<\/?[a-zA-Z][a-zA-Z0-9-]*\b[^>]*>/g;
   let out = "";
-  let pos = 0;
-  const dLen = delim.length;
-  while (pos < text.length) {
-    const start = text.indexOf(delim, pos);
-    let end = start === -1 ? -1 : text.indexOf(delim, start + dLen);
-    if (end === -1) return out + text.slice(pos);
-    if (end === start + dLen) {
-      out += text.slice(pos, start + dLen);
-      pos = start + dLen;
+  let lastIndex = 0;
+  let match;
+
+  while ((match = tagRe.exec(rawHtml)) !== null) {
+    if (match.index > lastIndex) {
+      out += esc(rawHtml.slice(lastIndex, match.index));
+    }
+    lastIndex = match.index + match[0].length;
+    const rawTag = match[0];
+    const isClosing = rawTag.startsWith("</");
+    const nameMatch = rawTag.match(/^<\/?([a-zA-Z][a-zA-Z0-9-]*)/);
+    const tag = nameMatch ? nameMatch[1].toLowerCase() : "";
+
+    if (tag === "img" && !isClosing) {
+      const attrs = parseTagAttributes(rawTag.slice(4, rawTag.endsWith("/>") ? -2 : -1));
+      const imgHtml = renderSafeImg(
+        {
+          src: attrs.src,
+          alt: attrs.alt || "",
+          title: attrs.title || "",
+          width: attrs.width || "",
+          height: attrs.height || "",
+          className: "md-img",
+        },
+        opts
+      );
+      out += imgHtml || esc(rawTag);
       continue;
     }
-    if (delim === "**") while (end + dLen < text.length && text[end + dLen] === "*") end++;
-    out += text.slice(pos, start) + openTag + text.slice(start + dLen, end) + closeTag;
-    pos = end + dLen;
-  }
-  return out;
-}
 
-function formatEmphasis(escapedText) {
-  let s = replacePairedDelimiter(escapedText, "**", "<strong>", "</strong>");
-  s = replacePairedDelimiter(s, "__", "<strong>", "</strong>");
-  s = s.replace(/(^|[^\w*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
-  return replacePairedDelimiter(s, "~~", "<del>", "</del>");
-}
+    if (tag === "a") {
+      if (isClosing) {
+        const state = openHtmlLinks.pop();
+        if (state === "button") out += "</button>";
+        else if (state === "anchor") out += "</a>";
+        continue;
+      }
+      const attrs = parseTagAttributes(rawTag.slice(2, -1));
+      const safeHref = sanitizeMarkdownUrl(attrs.href, opts);
+      if (!safeHref) {
+        openHtmlLinks.push("rejected");
+        continue;
+      }
+      openHtmlLinks.push(opts.linkMode);
+      const hrefAttr = esc(safeHref);
+      out +=
+        opts.linkMode === "button"
+          ? `<button type="button" class="md-link" data-open-url="${hrefAttr}" title="${hrefAttr}">`
+          : `<a class="md-link" href="${hrefAttr}" target="_blank" rel="noopener noreferrer">`;
+      continue;
+    }
 
-function buildDelimiterMaps(line) {
-  const n = line.length;
-  const closeBracketOf = new Int32Array(n).fill(-1);
-  const closeParenOf = new Int32Array(n).fill(-1);
-  const bracketStack = [];
-  const parenStack = [];
-  for (let k = 0; k < n; k++) {
-    const ch = line[k];
-    if (ch === "[") bracketStack.push(k);
-    else if (ch === "]" && bracketStack.length > 0) closeBracketOf[bracketStack.pop()] = k;
-    else if (ch === "(") parenStack.push(k);
-    else if (ch === ")") {
-      if (parenStack.length > 0) closeParenOf[parenStack.pop()] = k;
-    } else if (ch === " " || ch === "\t") parenStack.length = 0;
-  }
-  return { closeBracketOf, closeParenOf };
-}
+    if (SAFE_VOID_TAGS.has(tag)) {
+      out += isClosing ? "" : `<${tag}${tag === "hr" ? ' class="md-hr"' : ""} />`;
+      continue;
+    }
 
-function matchBracketParen(line, openBracket, limit, closeBracketOf, closeParenOf) {
-  const cb = closeBracketOf[openBracket];
-  if (cb === -1 || cb >= limit || cb + 1 >= limit || line[cb + 1] !== "(") return null;
-  const cp = closeParenOf[cb + 1];
-  return cp !== -1 && cp < limit ? { cb, cp } : null;
-}
-
-function flattenLabelText(line, start, end, closeBracketOf, closeParenOf, stash, restore) {
-  let out = "";
-  for (let k = start; k < end; ) {
-    const isImg = line[k] === "!" && k + 1 < end && line[k + 1] === "[";
-    const bracketIdx = isImg ? k + 1 : line[k] === "[" ? k : -1;
-    const m = bracketIdx !== -1 ? matchBracketParen(line, bracketIdx, end, closeBracketOf, closeParenOf) : null;
-    if (m && (isImg || m.cb > bracketIdx + 1)) {
-      const inner = line.slice(bracketIdx + 1, m.cb);
-      out += stash(isImg ? restore(esc(inner.trim() || "View image")) : restore(formatEmphasis(esc(inner))));
-      k = m.cp + 1;
-    } else out += line[k++];
-  }
-  return out;
-}
-
-/**
- * Replace Markdown images, linked badges, and links in linear O(N) time without nested regex quantifiers.
- * @param {string} line
- * @param {(html: string) => string} stash
- * @param {{ linkMode?: "anchor" | "button", repoUrl?: string, sha?: string }} opts
- * @param {(text: string) => string} [restore]
- * @returns {string}
- */
-export function replaceMarkdownLinksAndImages(line, stash, opts, restore = (t) => t) {
-  if (!line || !line.includes("[")) return line;
-  const { closeBracketOf, closeParenOf } = buildDelimiterMaps(line);
-  const n = line.length;
-  let out = "";
-
-  for (let i = 0; i < n; ) {
-    const isImg = line[i] === "!" && i + 1 < n && line[i + 1] === "[";
-    const bracketIdx = isImg ? i + 1 : line[i] === "[" ? i : -1;
-    const m = bracketIdx !== -1 ? matchBracketParen(line, bracketIdx, n, closeBracketOf, closeParenOf) : null;
-    if (m && (isImg || m.cb > bracketIdx + 1)) {
-      const safeHref = sanitizeMarkdownUrl(line.slice(m.cb + 2, m.cp), opts);
-      if (isImg) {
-        const label = restore(esc(line.slice(i + 2, m.cb).trim() || "View image"));
-        out += stash(renderLinkElement(label, safeHref, opts.linkMode));
-      } else {
-        const img = i + 2 < m.cb && line[i + 1] === "!" && line[i + 2] === "["
-          ? matchBracketParen(line, i + 2, m.cb, closeBracketOf, closeParenOf) : null;
-        if (img && img.cp === m.cb - 1) {
-          const label = restore(esc(line.slice(i + 3, img.cb).trim() || "Badge"));
-          out += stash(renderLinkElement(label, safeHref, opts.linkMode));
-        } else {
-          const rawLabel = line.slice(i + 1, m.cb);
-          const flat = rawLabel.includes("[")
-            ? flattenLabelText(line, i + 1, m.cb, closeBracketOf, closeParenOf, stash, restore)
-            : rawLabel;
-          out += stash(renderLinkElement(restore(formatEmphasis(esc(flat))), safeHref, opts.linkMode));
+    if (SAFE_CONTAINER_TAGS.has(tag)) {
+      if (isClosing) {
+        out += `</${tag}>`;
+        continue;
+      }
+      const attrs = parseTagAttributes(rawTag.slice(tag.length + 1, rawTag.endsWith("/>") ? -2 : -1));
+      const keptAttrs = [];
+      if (ALIGNABLE_TAGS.has(tag) && typeof attrs.align === "string") {
+        const align = attrs.align.trim().toLowerCase();
+        if (align === "left" || align === "center" || align === "right") {
+          keptAttrs.push(`style="text-align:${align}"`);
         }
       }
-      i = m.cp + 1;
-    } else out += line[i++];
+      if (tag === "details" && Object.prototype.hasOwnProperty.call(attrs, "open")) {
+        keptAttrs.push("open");
+      }
+      if ((tag === "td" || tag === "th") && /^\d{1,2}$/.test(String(attrs.colspan || ""))) {
+        keptAttrs.push(`colspan="${attrs.colspan}"`);
+      }
+      if ((tag === "td" || tag === "th") && /^\d{1,2}$/.test(String(attrs.rowspan || ""))) {
+        keptAttrs.push(`rowspan="${attrs.rowspan}"`);
+      }
+      if (tag === "table") keptAttrs.push('class="md-table"');
+      if (tag === "blockquote") keptAttrs.push('class="md-quote"');
+      if (tag === "pre") keptAttrs.push('class="md-pre"');
+      if (tag === "code") keptAttrs.push('class="md-code"');
+      const attrSuffix = keptAttrs.length > 0 ? ` ${keptAttrs.join(" ")}` : "";
+      out += `<${tag}${attrSuffix}>`;
+      continue;
+    }
+
+    out += esc(rawTag);
+  }
+
+  if (lastIndex < rawHtml.length) {
+    out += esc(rawHtml.slice(lastIndex));
   }
   return out;
 }
 
-function trimTrailingUrlPunctuation(rawMatch) {
-  let openParens = 0;
-  let closeParens = 0;
-  for (let i = 0; i < rawMatch.length; i++) {
-    if (rawMatch[i] === "(") openParens++;
-    else if (rawMatch[i] === ")") closeParens++;
+function renderFlattenedTokens(tokens, parser, opts) {
+  let out = "";
+  for (const tok of tokens || []) {
+    if (tok.type === "image") {
+      out += esc((tok.text || "").trim() || "Image");
+    } else if (tok.type === "link") {
+      out += renderFlattenedTokens(tok.tokens, parser, opts);
+    } else if (tok.type === "strong") {
+      out += `<strong>${renderFlattenedTokens(tok.tokens, parser, opts)}</strong>`;
+    } else if (tok.type === "em") {
+      out += `<em>${renderFlattenedTokens(tok.tokens, parser, opts)}</em>`;
+    } else if (tok.type === "del") {
+      out += `<del>${renderFlattenedTokens(tok.tokens, parser, opts)}</del>`;
+    } else if (tok.type === "codespan") {
+      out += `<code class="md-code">${esc(tok.text)}</code>`;
+    } else if (tok.type === "br") {
+      out += "<br />";
+    } else if (tok.type === "html") {
+      out += sanitizeHtmlToken(tok.text, opts, []);
+    } else if (tok.tokens) {
+      out += renderFlattenedTokens(tok.tokens, parser, opts);
+    } else {
+      out += esc(tok.text ?? tok.raw ?? "");
+    }
   }
-  let end = rawMatch.length;
-  while (end > 0) {
-    const ch = rawMatch[end - 1];
-    if (ch === ")") {
-      if (openParens >= closeParens) break;
-      closeParens--;
-      end--;
-    } else if (".,;:!?".includes(ch)) end--;
-    else break;
-  }
-  return { url: rawMatch.slice(0, end), trailing: rawMatch.slice(end) };
+  return out;
 }
 
-function formatInline(rawLine, opts) {
-  const tokens = [];
-  const stash = (html) => `\x00P${tokens.push(html) - 1}\x00`;
-  const restore = (text) => text.replace(TOKEN_RE, (_m, i) => tokens[Number(i)]);
+function createMarkdownRenderer(opts) {
+  const openHtmlLinks = [];
+  let inLink = false;
 
-  let s = rawLine.replace(/`([^`\n]+)`/g, (_m, code) => stash(`<code class="md-code">${esc(code)}</code>`));
-  s = replaceMarkdownLinksAndImages(s, stash, opts, restore);
-  s = formatEmphasis(esc(s));
-  s = s.replace(/https?:\/\/(?:[^\s<&]|&(?!(?:quot|#39|lt|gt);))+/g, (rawMatch) => {
-    const { url, trailing } = trimTrailingUrlPunctuation(rawMatch);
-    const decoded = url.replaceAll("&amp;", "&");
-    const safeHref = sanitizeMarkdownUrl(decoded, opts);
-    return safeHref ? `${renderLinkElement(esc(decoded), safeHref, opts.linkMode)}${trailing}` : rawMatch;
-  });
-  return restore(s);
-}
+  const renderer = {
+    heading({ tokens, depth }) {
+      const level = Math.min(6, Math.max(1, depth));
+      return `<h${level} class="md-h${level}">${this.parser.parseInline(tokens)}</h${level}>\n`;
+    },
+    code({ text, lang }) {
+      const cleanLang = typeof lang === "string" ? lang.trim().split(/\s+/)[0] : "";
+      return `<pre class="md-pre"><code${cleanLang ? ` data-lang="${esc(cleanLang)}"` : ""}>${esc(text)}</code></pre>\n`;
+    },
+    codespan({ text }) {
+      return `<code class="md-code">${esc(text)}</code>`;
+    },
+    blockquote({ tokens }) {
+      return `<blockquote class="md-quote">${this.parser.parse(tokens).trim()}</blockquote>\n`;
+    },
+    hr() {
+      return '<hr class="md-hr" />\n';
+    },
+    br() {
+      return "<br />";
+    },
+    list(token) {
+      const tag = token.ordered ? "ol" : "ul";
+      const startAttr = token.ordered && token.start !== 1 ? ` start="${token.start}"` : "";
+      const body = token.items.map((item) => this.listitem(item)).join("");
+      return `<${tag} class="md-list"${startAttr}>${body}</${tag}>\n`;
+    },
+    listitem(item) {
+      let itemBody = "";
+      if (item.task) {
+        itemBody += `<input type="checkbox" disabled${item.checked ? " checked" : ""} /> `;
+      }
+      if (item.loose) {
+        itemBody += this.parser.parse(item.tokens);
+      } else {
+        for (const tok of item.tokens) {
+          if (tok.type === "text" && tok.tokens) {
+            itemBody += this.parser.parseInline(tok.tokens);
+          } else if (tok.type === "text") {
+            itemBody += esc(tok.text);
+          } else {
+            itemBody += this.parser.parse([tok]);
+          }
+        }
+      }
+      return `<li>${itemBody.trim()}</li>`;
+    },
+    paragraph({ tokens }) {
+      return `<p>${this.parser.parseInline(tokens)}</p>\n`;
+    },
+    table(token) {
+      const alignAttr = (idx) => (token.align[idx] ? ` style="text-align:${token.align[idx]}"` : "");
+      const headCells = token.header
+        .map((cell, idx) => `<th${alignAttr(idx)}>${this.parser.parseInline(cell.tokens)}</th>`)
+        .join("");
+      const bodyRows = token.rows
+        .map((row) => {
+          const tds = row
+            .map((cell, idx) => `<td${alignAttr(idx)}>${this.parser.parseInline(cell.tokens)}</td>`)
+            .join("");
+          return `<tr>${tds}</tr>`;
+        })
+        .join("");
+      return `<div class="md-table-wrap"><table class="md-table"><thead><tr>${headCells}</tr></thead>${
+        bodyRows ? `<tbody>${bodyRows}</tbody>` : ""
+      }</table></div>\n`;
+    },
+    strong({ tokens }) {
+      return `<strong>${this.parser.parseInline(tokens)}</strong>`;
+    },
+    em({ tokens }) {
+      return `<em>${this.parser.parseInline(tokens)}</em>`;
+    },
+    del({ tokens }) {
+      return `<del>${this.parser.parseInline(tokens)}</del>`;
+    },
+    image({ href, title, text }) {
+      const altText = (text || "").trim() || "Image";
+      const imgHtml = renderSafeImg(
+        { src: href, alt: altText, title: title || "", className: "md-img" },
+        opts
+      );
+      return imgHtml || esc(altText);
+    },
+    link({ href, title, tokens }) {
+      const safeHref = sanitizeMarkdownUrl(href, opts);
+      if (inLink) {
+        return renderFlattenedTokens(tokens, this.parser, opts);
+      }
 
-function stripTrailingHeadingHashes(rawHeading) {
-  let end = rawHeading.length;
-  while (end > 0 && /\s/.test(rawHeading[end - 1])) end--;
-  while (end > 0 && rawHeading[end - 1] === "#") end--;
-  while (end > 0 && /\s/.test(rawHeading[end - 1])) end--;
-  return end > 0 ? rawHeading.slice(0, end) : rawHeading.trim();
-}
+      if (tokens?.length === 1 && tokens[0].type === "image") {
+        const imgTok = tokens[0];
+        const altText = (imgTok.text || "").trim() || "Badge";
+        const badgeHtml = renderSafeImg(
+          {
+            src: imgTok.href,
+            alt: altText,
+            title: imgTok.title || "",
+            className: "md-badge-img",
+          },
+          opts
+        );
+        return renderLinkElement(badgeHtml || esc(altText), safeHref, opts.linkMode, title || "");
+      }
 
-function renderCodeFence(lang, lines) {
-  return `<pre class="md-pre"><code${lang ? ` data-lang="${esc(lang)}"` : ""}>${esc(lines.join("\n"))}</code></pre>`;
+      const hasNestedMediaOrLink = (tokens || []).some(
+        (t) => t.type === "image" || t.type === "link"
+      );
+      inLink = true;
+      let innerHtml;
+      try {
+        innerHtml = hasNestedMediaOrLink
+          ? renderFlattenedTokens(tokens, this.parser, opts)
+          : this.parser.parseInline(tokens);
+      } finally {
+        inLink = false;
+      }
+      return renderLinkElement(innerHtml, safeHref, opts.linkMode, title || "");
+    },
+    html({ text }) {
+      return sanitizeHtmlToken(text, opts, openHtmlLinks);
+    },
+    text(token) {
+      if ("tokens" in token && token.tokens) {
+        return this.parser.parseInline(token.tokens);
+      }
+      return esc(token.text);
+    },
+  };
+
+  return { renderer, openHtmlLinks };
 }
 
 /**
- * Render untrusted Markdown safely to HTML with zero external dependencies.
+ * Render untrusted Markdown safely to HTML using marked (CommonMark + GFM) with strict sanitization.
  * @param {string} markdown
  * @param {{ linkMode?: "anchor" | "button", repoUrl?: string, sha?: string }} [options]
  * @returns {string}
@@ -221,63 +371,15 @@ export function renderMarkdown(markdown, { linkMode = "anchor", repoUrl = "", sh
   if (!input.trim()) return "";
 
   const opts = { linkMode, repoUrl, sha };
-  const out = [];
-  let inFence = false, fenceLang = "", fenceLines = [];
-  let listType = null, listItems = [], quoteLines = [], paraLines = [];
+  const { renderer, openHtmlLinks } = createMarkdownRenderer(opts);
+  const instance = new Marked({ gfm: true, breaks: false });
+  instance.use({ renderer });
 
-  const flushPara = () => {
-    if (!paraLines.length) return;
-    out.push(`<p>${paraLines.map((l) => formatInline(l, opts)).join(" ")}</p>`);
-    paraLines = [];
-  };
-  const flushList = () => {
-    if (!listType || !listItems.length) return;
-    out.push(`<${listType} class="md-list">${listItems.map((item) => `<li>${formatInline(item, opts)}</li>`).join("")}</${listType}>`);
-    listType = null; listItems = [];
-  };
-  const flushQuote = () => {
-    if (!quoteLines.length) return;
-    out.push(`<blockquote class="md-quote">${quoteLines.map((l) => formatInline(l, opts)).join("<br />")}</blockquote>`);
-    quoteLines = [];
-  };
-  const flushBlocks = () => { flushPara(); flushList(); flushQuote(); };
-  const pushList = (type, item) => {
-    flushPara(); flushQuote();
-    if (listType && listType !== type) flushList();
-    listType = type; listItems.push(item);
-  };
-
-  for (const line of input.split("\n")) {
-    const trimmedLine = line.trim();
-    const fenceMatch = trimmedLine.match(/^(?:```|~~~)\s*([A-Za-z0-9_+-]*)$/);
-    if (fenceMatch) {
-      if (inFence) { out.push(renderCodeFence(fenceLang, fenceLines)); inFence = false; fenceLang = ""; fenceLines = []; }
-      else { flushBlocks(); inFence = true; fenceLang = fenceMatch[1] || ""; fenceLines = []; }
-      continue;
-    }
-    if (inFence) { fenceLines.push(line); continue; }
-    if (!trimmedLine) { flushBlocks(); continue; }
-    if (/^(?:-{3,}|\*{3,}|_{3,})$/.test(trimmedLine)) { flushBlocks(); out.push('<hr class="md-hr" />'); continue; }
-
-    const headingMatch = line.match(/^\s*(#{1,6})\s+(.+)$/);
-    if (headingMatch) {
-      flushBlocks();
-      const level = Math.min(6, headingMatch[1].length);
-      out.push(`<h${level} class="md-h${level}">${formatInline(stripTrailingHeadingHashes(headingMatch[2]), opts)}</h${level}>`);
-      continue;
-    }
-    const quoteMatch = line.match(/^\s*>\s?(.*)$/);
-    if (quoteMatch) { flushPara(); flushList(); quoteLines.push(quoteMatch[1]); continue; }
-    const ulMatch = line.match(/^\s*[-*+]\s+(.+)$/);
-    if (ulMatch) { pushList("ul", ulMatch[1]); continue; }
-    const olMatch = line.match(/^\s*\d+[.)]\s+(.+)$/);
-    if (olMatch) { pushList("ol", olMatch[1]); continue; }
-
-    flushList(); flushQuote();
-    paraLines.push(line.trim());
+  let rendered = instance.parse(input).trim();
+  while (openHtmlLinks.length > 0) {
+    const state = openHtmlLinks.pop();
+    if (state === "button") rendered += "</button>";
+    else if (state === "anchor") rendered += "</a>";
   }
-
-  if (inFence) out.push(renderCodeFence(fenceLang, fenceLines));
-  flushBlocks();
-  return `<div class="md-body">${out.join("\n")}</div>`;
+  return rendered ? `<div class="md-body">${rendered}</div>` : "";
 }

@@ -21,6 +21,11 @@ import {
   ToolValidationError,
 } from "../../server/lib/service.mjs";
 import {
+  applyPendingUpdates,
+  registerShutdownSwapHook,
+  spawnShutdownSwapWorker,
+} from "../../server/lib/pending-updates.mjs";
+import {
   DEFAULT_STANDALONE_PORT,
   NO_CACHE_HEADERS,
   parsePortValue,
@@ -136,7 +141,7 @@ export async function dispatchSidecarTool({ service, name, arguments: rawArgs })
 export function createStandaloneServer({
   service,
   htmlPath = DEFAULT_HTML_PATH,
-  clientVersion = "1.0.7",
+  clientVersion = "1.0.8",
   port = 0,
   host = "127.0.0.1",
 }) {
@@ -288,6 +293,7 @@ export async function createSidecarApp({
 
   let activeSidecarApp = null;
   let standalone = null;
+  let unregisterShutdownHook = null;
 
   function createJsonResponse(payload, status = 200) {
     if (SidecarResponse) {
@@ -313,6 +319,14 @@ export async function createSidecarApp({
     },
     async start() {
       await store.init();
+      const startupPending = await applyPendingUpdates({ store });
+      if (startupPending.stillLocked.length > 0) {
+        spawnShutdownSwapWorker({ dataDir: store.dataDir, watchPid: process.pid });
+      }
+      unregisterShutdownHook = registerShutdownSwapHook({
+        dataDir: store.dataDir,
+        watchPid: process.pid,
+      });
       resolveHtmlWithPreload(htmlPath);
 
       if (isSidecarEnv) {
@@ -371,6 +385,10 @@ export async function createSidecarApp({
       return { mode: "standalone", port: boundPort };
     },
     async stop() {
+      if (unregisterShutdownHook) {
+        unregisterShutdownHook();
+        unregisterShutdownHook = null;
+      }
       if (activeSidecarApp && typeof activeSidecarApp.close === "function") {
         await activeSidecarApp.close();
         activeSidecarApp = null;
@@ -379,6 +397,7 @@ export async function createSidecarApp({
         await standalone.stop();
         standalone = null;
       }
+      spawnShutdownSwapWorker({ dataDir: store.dataDir, watchPid: process.pid });
     },
   };
 }

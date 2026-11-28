@@ -1,7 +1,8 @@
+import { createMarketplaceActions } from "./actions.js";
 import { createHostBridge } from "./bridge.js";
 import { renderDrawer } from "./drawer.js";
-import { state } from "./helpers.js";
-import { populateCategoryDropdown, populateProjectSelector, render } from "./render.js";
+import { getInstallsFor, state } from "./helpers.js";
+import { populateProjectSelector, render } from "./render.js";
 
 // ---------------------------------------------------------------------------
 // Dual-Mode Host Bridge (Antigravity Sidecar / HTTP vs MCP App)
@@ -37,239 +38,40 @@ function openExternal(url) {
   bridge.openExternal(url);
 }
 
-// ---------------------------------------------------------------------------
-// Data Loading & Actions
-// ---------------------------------------------------------------------------
-let bootstrapSeq = 0;
-
-async function loadBootstrap(forceCheck = false) {
-  const seq = ++bootstrapSeq;
-  const refreshBtn = document.getElementById("btn-refresh");
-  refreshBtn.disabled = true;
-  refreshBtn.textContent = "Syncing...";
-  state.errorMessage = "";
-
-  try {
-    if (forceCheck) {
-      await callServerTool("mp_check_updates", { workspaceRoot: state.activeProjectRoot || undefined });
-    }
-    const data = await callServerTool("mp_get_bootstrap", {
-      workspaceRoot: state.activeProjectRoot || undefined,
-    });
-
-    if (seq !== bootstrapSeq) return;
-
-    state.catalog = data.index || { plugins: [] };
-    state.denylist = data.denylist || { blockedRepos: [], blockedShas: [] };
-    state.prefs = data.prefs || { favorites: [], hidden: [] };
-    state.installed = data.installed || [];
-    state.workspaceRoots = data.workspaceRoots || [];
-    if (data.clientVersion) state.clientVersion = data.clientVersion;
-    if (data.platform) state.platform = data.platform;
-
-    if (!state.activeProjectRoot && state.workspaceRoots.length > 0) {
-      state.activeProjectRoot = state.workspaceRoots[0];
-    }
-
-    populateCategoryDropdown();
-    populateProjectSelector();
-  } catch (err) {
-    if (seq !== bootstrapSeq) return;
-    state.errorMessage = err.message;
-  } finally {
-    if (seq === bootstrapSeq) {
-      refreshBtn.disabled = false;
-      refreshBtn.textContent = "Check Updates";
-      render();
-    }
-  }
-}
-
-async function togglePref(pluginId, field) {
-  const list = new Set(state.prefs[field] || []);
-  const nextValue = !list.has(pluginId);
-  if (nextValue) list.add(pluginId);
-  else list.delete(pluginId);
-  state.prefs[field] = [...list];
-  render();
-
-  try {
-    await callServerTool("mp_update_prefs", { id: pluginId, field, value: nextValue });
-  } catch (err) {
-    state.errorMessage = `Failed to save preference: ${err.message}`;
-    await loadBootstrap(false);
-  }
-}
-
-async function executeInstall(pluginId, scope, { replaceSlug = null, replaceEnabled = true } = {}) {
-  if (scope === "project" && !state.activeProjectRoot) {
-    state.errorMessage = "Select or enter an active project path before installing to Project scope.";
-    render();
-    return;
-  }
-
-  state.busyIds.add(pluginId);
-  state.errorMessage = "";
-  render();
-  if (state.drawer.open) renderDrawer();
-
-  try {
-    const res = await callServerTool("mp_install_plugin", {
-      id: pluginId,
-      scope,
-      workspaceRoot: scope === "project" ? state.activeProjectRoot : undefined,
-      ...(replaceSlug ? { replaceSlug, replaceEnabled } : {}),
-    });
-    if (res.requiresReload) state.requiresReload = true;
-    state.drawer.pendingAction = null;
-    await loadBootstrap(false);
-    if (state.drawer.open && state.drawer.pluginId === pluginId) {
-      await openDrawer(pluginId, { subTab: state.drawer.subTab });
-    }
-  } catch (err) {
-    state.errorMessage = `Install failed for ${pluginId}: ${err.message}`;
-  } finally {
-    state.busyIds.delete(pluginId);
-    render();
-    if (state.drawer.open) renderDrawer();
-  }
-}
-
-async function executeUninstall(inst) {
-  const key = inst.id || inst.slug;
-  state.busyIds.add(key);
-  state.errorMessage = "";
-  render();
-
-  try {
-    await callServerTool("mp_uninstall_plugin", {
-      slug: inst.slug,
-      id: inst.id,
-      scope: inst.scope,
-      enabled: inst.enabled !== false,
-      workspaceRoot: inst.scope === "project" ? state.activeProjectRoot : undefined,
-    });
-    state.requiresReload = true;
-    await loadBootstrap(false);
-    if (state.drawer.open) renderDrawer();
-  } catch (err) {
-    state.errorMessage = `Uninstall failed for ${key}: ${err.message}`;
-  } finally {
-    state.busyIds.delete(key);
-    render();
-  }
-}
-
-async function executeToggleEnabled(inst) {
-  const key = inst.id || inst.slug;
-  const nextEnabled = inst.enabled === false;
-  state.busyIds.add(key);
-  state.errorMessage = "";
-  render();
-
-  try {
-    await callServerTool("mp_toggle_plugin", {
-      slug: inst.slug,
-      scope: inst.scope,
-      enabled: nextEnabled,
-      workspaceRoot: inst.scope === "project" ? state.activeProjectRoot : undefined,
-    });
-    state.requiresReload = true;
-    await loadBootstrap(false);
-  } catch (err) {
-    state.errorMessage = `Could not ${nextEnabled ? "enable" : "disable"} ${key}: ${err.message}`;
-  } finally {
-    state.busyIds.delete(key);
-    render();
-  }
-}
-
-let drawerSeq = 0;
-
-async function openDrawer(pluginId, { subTab = "audit", pendingAction = null } = {}) {
-  const seq = ++drawerSeq;
-  state.drawer = {
-    open: true,
-    pluginId,
-    subTab,
-    pendingAction,
-    loading: true,
-    detail: null,
-    error: null,
-  };
-
-  document.getElementById("drawer-backdrop").hidden = false;
-  const drawerEl = document.getElementById("audit-drawer");
-  drawerEl.classList.add("is-open");
-  drawerEl.setAttribute("aria-hidden", "false");
-  renderDrawer();
-
-  try {
-    const res = await callServerTool("mp_get_plugin_detail", {
-      id: pluginId,
-      workspaceRoot: state.activeProjectRoot || undefined,
-    });
-    if (seq !== drawerSeq || !state.drawer.open) return;
-    state.drawer.detail = res;
-  } catch (err) {
-    if (seq !== drawerSeq || !state.drawer.open) return;
-    state.drawer.error = err?.message || String(err);
-  } finally {
-    if (seq === drawerSeq && state.drawer.open) {
-      state.drawer.loading = false;
-      renderDrawer();
-    }
-  }
-}
-
-function closeDrawer() {
-  drawerSeq++;
-  state.drawer.open = false;
-  state.drawer.loading = false;
-  document.getElementById("drawer-backdrop").hidden = true;
-  const drawerEl = document.getElementById("audit-drawer");
-  drawerEl.classList.remove("is-open");
-  drawerEl.setAttribute("aria-hidden", "true");
-}
+const {
+  loadBootstrap,
+  togglePref,
+  executeInstall,
+  executeUninstall,
+  executeToggleEnabled,
+  openDrawer,
+  closeDrawer,
+} = createMarketplaceActions(callServerTool);
 
 // ---------------------------------------------------------------------------
 // Event Wiring
 // ---------------------------------------------------------------------------
 function bindEvents() {
+  const selectBindings = [
+    ["filter-category", "category", "value"],
+    ["filter-surface", "surface", "value"],
+    ["filter-risk", "maxRisk", "value"],
+    ["sort-select", "sort", "value"],
+    ["chk-no-creds", "noCredsOnly", "checked"],
+    ["chk-show-hidden", "showHidden", "checked"],
+  ];
+
   document.getElementById("search-input").addEventListener("input", (e) => {
     state.query = e.target.value;
     render();
   });
 
-  document.getElementById("filter-category").addEventListener("change", (e) => {
-    state.category = e.target.value;
-    render();
-  });
-
-  document.getElementById("filter-surface").addEventListener("change", (e) => {
-    state.surface = e.target.value;
-    render();
-  });
-
-  document.getElementById("filter-risk").addEventListener("change", (e) => {
-    state.maxRisk = e.target.value;
-    render();
-  });
-
-  document.getElementById("sort-select").addEventListener("change", (e) => {
-    state.sort = e.target.value;
-    render();
-  });
-
-  document.getElementById("chk-no-creds").addEventListener("change", (e) => {
-    state.noCredsOnly = e.target.checked;
-    render();
-  });
-
-  document.getElementById("chk-show-hidden").addEventListener("change", (e) => {
-    state.showHidden = e.target.checked;
-    render();
-  });
+  for (const [elId, stateKey, prop] of selectBindings) {
+    document.getElementById(elId).addEventListener("change", (e) => {
+      state[stateKey] = e.target[prop];
+      render();
+    });
+  }
 
   document.getElementById("btn-toggle-filters").addEventListener("click", () => {
     state.filtersOpen = !state.filtersOpen;
@@ -277,11 +79,7 @@ function bindEvents() {
   });
 
   document.getElementById("btn-clear-filters").addEventListener("click", () => {
-    state.category = "all";
-    state.surface = "all";
-    state.maxRisk = "all";
-    state.sort = "stars";
-    state.noCredsOnly = false;
+    Object.assign(state, { category: "all", surface: "all", maxRisk: "all", sort: "stars", noCredsOnly: false });
     document.getElementById("filter-category").value = "all";
     document.getElementById("filter-surface").value = "all";
     document.getElementById("filter-risk").value = "all";
@@ -311,22 +109,19 @@ function bindEvents() {
   const projectEditor = document.getElementById("custom-project-editor");
   const projectInput = document.getElementById("custom-project-input");
 
-  function openProjectEditor() {
-    projectPill.hidden = true;
-    projectEditor.hidden = false;
-    projectInput.value = state.activeProjectRoot || "";
-    projectInput.focus();
-    projectInput.select();
-  }
-
-  function closeProjectEditor() {
-    projectEditor.hidden = true;
-    projectPill.hidden = false;
+  function toggleProjectEditor(open) {
+    projectPill.hidden = open;
+    projectEditor.hidden = !open;
+    if (open) {
+      projectInput.value = state.activeProjectRoot || "";
+      projectInput.focus();
+      projectInput.select();
+    }
   }
 
   function applyCustomProject() {
     const next = projectInput.value.trim();
-    closeProjectEditor();
+    toggleProjectEditor(false);
     if (next) {
       state.activeProjectRoot = next;
       populateProjectSelector();
@@ -334,17 +129,12 @@ function bindEvents() {
     }
   }
 
-  document.getElementById("btn-custom-project").addEventListener("click", openProjectEditor);
+  document.getElementById("btn-custom-project").addEventListener("click", () => toggleProjectEditor(true));
   document.getElementById("btn-save-project").addEventListener("click", applyCustomProject);
-  document.getElementById("btn-cancel-project").addEventListener("click", closeProjectEditor);
+  document.getElementById("btn-cancel-project").addEventListener("click", () => toggleProjectEditor(false));
   projectInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      applyCustomProject();
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      closeProjectEditor();
-    }
+    if (e.key === "Enter") { e.preventDefault(); applyCustomProject(); }
+    else if (e.key === "Escape") { e.preventDefault(); toggleProjectEditor(false); }
   });
 
   document.getElementById("btn-refresh").addEventListener("click", () => loadBootstrap(true));
@@ -363,6 +153,16 @@ function bindEvents() {
     if (btn.hasAttribute("data-dismiss-reload")) {
       state.requiresReload = false;
       render();
+    } else if (btn.hasAttribute("data-cancel-pending")) {
+      btn.disabled = true;
+      btn.textContent = "Cancelling...";
+      callServerTool("mp_cancel_pending_updates", {})
+        .then(async (res) => {
+          state.pendingUpdates = res.pendingUpdates || [];
+          await loadBootstrap(false);
+          if (state.drawer.open) renderDrawer();
+        })
+        .catch((err) => { state.errorMessage = `Cancel failed: ${err.message}`; render(); });
     } else if (btn.hasAttribute("data-dismiss-self-update")) {
       state.dismissedSelfUpdate = true;
       render();
@@ -429,9 +229,12 @@ function bindEvents() {
         },
       });
     } else if (action === "install") {
-      // Force audit review for elevated/high risk or credential-requiring plugins
+      const hasProjectConflict =
+        scope === "global" && getInstallsFor(id).some((i) => i.scope === "project");
+      // Force audit review for elevated/high risk, credential-requiring plugins, or project-scope conflicts
       const needsReview =
-        plugin && (plugin.security?.riskTier !== "low" || plugin.requiresCredentials);
+        hasProjectConflict ||
+        (plugin && (plugin.security?.riskTier !== "low" || plugin.requiresCredentials));
       if (needsReview) {
         openDrawer(id, { subTab: "audit", pendingAction: { type: "install", scope } });
       } else {
@@ -461,6 +264,11 @@ function bindEvents() {
         replaceSlug: btn.dataset.replaceSlug || null,
         replaceEnabled: btn.dataset.replaceEnabled !== "false",
       });
+    } else if (btn.dataset.drawerUninstall) {
+      const inst = state.installed.find(
+        (i) => i.slug === btn.dataset.drawerUninstall && i.scope === btn.dataset.scope
+      );
+      if (inst) executeUninstall(inst);
     }
   });
 

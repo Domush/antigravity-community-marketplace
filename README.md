@@ -7,6 +7,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Antigravity App Compatible](https://img.shields.io/badge/Antigravity%20App-Native%20Plugin-6366f1.svg)]()
 
+🌐 **Preview on the Web:** Want to explore the catalog before installing? **[Browse the Community Plugin Marketplace online &rarr;](https://domush.github.io/antigravity-plugin-registry/)** to search plugins, inspect security audit summaries, and discover what’s available right in your browser.
+
 > **Disclaimer:** This is an independent community project and is not affiliated with or endorsed by Google. Always review audit findings before installing elevated or high-risk plugins.
 
 <img width="853" height="941" alt="image" src="https://github.com/user-attachments/assets/104c6fcf-9006-4cca-862e-b3325e9f994d" />
@@ -91,7 +93,7 @@ Every plugin in the registry is scanned by an automated, open-source GitHub Acti
 
 ## Troubleshooting
 
-* **Installed or toggled plugin doesn't appear yet:** Antigravity loads MCP servers and lifecycle hooks on startup. Reload or restart the Antigravity App whenever the amber reload banner appears.
+* **Installed or toggled plugin doesn't appear yet (or shows Pending Restart):** Antigravity loads MCP servers and lifecycle hooks on startup. If an active plugin's files are currently in use during an update, the verified update is staged automatically and finishes cleanly as soon as you close or restart the Antigravity App.
 * **"Select an active project path" on Project install:** When opened from the global sidebar, Antigravity may not attach a workspace root automatically. Click **Edit** in the top-right **Project** pill to enter your project's absolute path.
 * **"Untrusted signing keyId" or "Marketplace Update Available" (Red Banner):** The registry rotated its signing key or bumped the minimum supported schema. Update `agy-community-marketplace` to the latest release.
 * **"Integrity mismatch" on install:** The downloaded archive did not match the audited `contentTreeSha256`. Your existing installation is left untouched; click **Check Updates** and retry, or report the plugin if the error persists.

@@ -1,7 +1,8 @@
 {
   "$schema": "https://antigravity.google/schemas/v1/plugin.json",
   "name": "agy-community-marketplace",
-  "version": "1.0.7",
-  "icon": "icon.svg",
+  "displayName": "Community Plugins",
+  "version": "1.0.8",
+  "logo": "icon.svg",
   "description": "Browse, audit, install, and update community-made Antigravity App plugins."
 }

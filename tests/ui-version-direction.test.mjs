@@ -1,10 +1,20 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { summarizeStatus } from "../server/lib/service.mjs";
 import {
+  buildAuditBlocks,
+  buildDrawerFooterHtml,
+  buildProjectInstalledWarning,
+  buildStagedUpdateNotice,
+} from "../ui/src/drawer-sections.js";
+import {
   classifyInstallStatus,
   compareSemver,
+  computePermissionDiff,
   getInstallActionMeta,
+  getPluginSlug,
   hasUpdateAvailable,
   parseSemver,
   state,
@@ -96,7 +106,7 @@ describe("UI install version direction and action metadata", () => {
     const adoptMeta = getInstallActionMeta(repoOriginInstall, plugin);
     assert.equal(adoptMeta.direction, "upgrade");
     assert.equal(adoptMeta.isAhead, false);
-    assert.equal(adoptMeta.action, "review-adopt");
+    assert.equal(adoptMeta.action, "review-update");
     assert.equal(adoptMeta.label, "Update 1.1.1 → 1.1.2");
     assert.equal(adoptMeta.isPrimary, true);
 
@@ -126,13 +136,13 @@ describe("UI install version direction and action metadata", () => {
     assert.equal(repoStatus.isAhead, true);
 
     const repoMeta = getInstallActionMeta(repoOriginAhead, plugin);
-    assert.equal(repoMeta.action, "review-adopt");
+    assert.equal(repoMeta.action, "review-update");
     assert.equal(repoMeta.isPrimary, false);
     assert.equal(repoMeta.isDowngrade, true);
     assert.equal(repoMeta.badgeLabel, "Local v1.1.2 Ahead");
-    assert.equal(repoMeta.label, "Adopt Registry v1.1.1 (Downgrade)");
+    assert.equal(repoMeta.label, "Downgrade to v1.1.1");
     assert.equal(repoMeta.label.includes("1.1.2 → 1.1.1"), false);
-    assert.equal(repoMeta.label.includes("Adopt & Update"), false);
+    assert.equal(repoMeta.label.includes("Adopt"), false);
 
     state.installed = [managedAhead];
     assert.equal(hasUpdateAvailable(plugin), false);
@@ -141,7 +151,7 @@ describe("UI install version direction and action metadata", () => {
     assert.equal(managedMeta.isAhead, true);
     assert.equal(managedMeta.action, "review-update");
     assert.equal(managedMeta.isPrimary, false);
-    assert.equal(managedMeta.label, "Adopt Registry v1.1.1 (Downgrade)");
+    assert.equal(managedMeta.label, "Downgrade to v1.1.1");
     assert.equal(managedMeta.label.includes("Update 1.1.2 → 1.1.1"), false);
   });
 
@@ -165,9 +175,9 @@ describe("UI install version direction and action metadata", () => {
     assert.equal(hasUpdateAvailable(plugin), false);
     const adoptSameMeta = getInstallActionMeta(repoOriginSame, plugin);
     assert.equal(adoptSameMeta.direction, "same");
-    assert.equal(adoptSameMeta.action, "review-adopt");
-    assert.equal(adoptSameMeta.isPrimary, false);
-    assert.equal(adoptSameMeta.label, "Adopt & Verify (v1.1.1)");
+    assert.equal(adoptSameMeta.action, "review-update");
+    assert.equal(adoptSameMeta.isPrimary, true);
+    assert.equal(adoptSameMeta.label, "Re-sync Verified (v1.1.1)");
 
     state.installed = [managedShaMismatch];
     assert.equal(hasUpdateAvailable(plugin), true);
@@ -197,7 +207,7 @@ describe("UI install version direction and action metadata", () => {
     const repoMeta = getInstallActionMeta(repoOriginLocal, plugin);
     assert.equal(repoMeta.direction, "unversioned");
     assert.equal(repoMeta.isAhead, false);
-    assert.equal(repoMeta.action, "review-adopt");
+    assert.equal(repoMeta.action, "review-update");
     assert.equal(repoMeta.isPrimary, true);
     assert.equal(repoMeta.label, "Update local → 1.1.1");
 
@@ -286,5 +296,152 @@ describe("Server summarizeStatus semver direction parity", () => {
       ]).updates,
       1
     );
+  });
+});
+
+describe("Drawer update review, tab ordering, and install-aware footer", () => {
+  it("renders Release Notes and Permission Diff when reviewing a matched manual update", () => {
+    const summary = makePlugin({ version: "2.0.1", release: { sha: "reg-sha-201", ref: "v2.0.1" } });
+    const targetInstall = makeInstall({ version: "2.0.0", matchTier: "repo_origin", capabilities: [] });
+    const diff = computePermissionDiff(targetInstall.capabilities, ["reads_gemini_data", "mcp_local_exec"]);
+
+    const html = buildAuditBlocks({
+      summary,
+      detail: { latestReleaseNotes: "## What changed\n- Fixed bug" },
+      collisions: [],
+      preflight: null,
+      findings: [],
+      targetCaps: ["reads_gemini_data", "mcp_local_exec"],
+      targetInstall,
+      diff,
+      pending: { type: "update", scope: "global", replaceSlug: "context-mode", replaceEnabled: true },
+      isAhead: false,
+      isUpdate: true,
+    });
+
+    assert.equal(html.includes("Release Notes (v2.0.1)"), true);
+    assert.equal(html.includes("Fixed bug"), true);
+    assert.equal(html.includes("Permission Diff: v2.0.0 &rarr; v2.0.1"), true);
+    assert.equal(html.includes("Adopt Manual Plugin"), false);
+  });
+
+  it("shows Confirm Update in Details footer, locks out duplicate staged updates, and hides Install (project) when globally installed", () => {
+    const summary = makePlugin({ version: "2.0.1", release: { sha: "reg-sha-201" } });
+    const globalOutdated = makeInstall({ scope: "global", version: "2.0.0", matchTier: "repo_origin" });
+
+    const detailsFooter = buildDrawerFooterHtml({
+      summary,
+      installs: [globalOutdated],
+      pending: null,
+      pendingUpdates: [],
+      isAhead: false,
+      isBusy: false,
+    });
+
+    assert.equal(detailsFooter.includes("Confirm Update (global)"), true);
+    assert.equal(detailsFooter.includes("Install (global)"), false);
+    assert.equal(detailsFooter.includes("Install (project)"), false);
+    assert.equal(detailsFooter.includes("Adopt"), false);
+
+    const stagedDetailsFooter = buildDrawerFooterHtml({
+      summary,
+      installs: [globalOutdated],
+      pending: null,
+      pendingUpdates: [{ id: summary.id, scope: "global", version: "2.0.1" }],
+      isAhead: false,
+      isBusy: false,
+    });
+    assert.equal(stagedDetailsFooter.includes("Pending Restart (global)"), true);
+    assert.equal(stagedDetailsFooter.includes("Confirm Update"), false);
+
+    const pendingFooter = buildDrawerFooterHtml({
+      summary,
+      installs: [globalOutdated],
+      pending: { type: "update", scope: "global", replaceSlug: "context-mode", replaceEnabled: true },
+      pendingUpdates: [],
+      isAhead: false,
+      isBusy: false,
+    });
+    assert.equal(pendingFooter.includes("Confirm Update (global)"), true);
+    assert.equal(pendingFooter.includes("Adopt &amp; Verify"), false);
+  });
+
+  it("warns and disables Install (global) when plugin is already installed in project scope", () => {
+    const summary = makePlugin({ version: "2.0.1", release: { sha: "reg-sha-201" } });
+    const projectInst = makeInstall({ scope: "project", version: "2.0.1", manual: false, matchTier: "managed", sha: "reg-sha-201" });
+
+    const warningHtml = buildProjectInstalledWarning({
+      installs: [projectInst],
+      pending: { type: "install", scope: "global" },
+    });
+    assert.equal(warningHtml.includes("Already Installed in Project Scope"), true);
+    assert.equal(warningHtml.includes("Uninstall the project-level install first"), true);
+
+    const footerHtml = buildDrawerFooterHtml({
+      summary,
+      installs: [projectInst],
+      pending: { type: "install", scope: "global" },
+      pendingUpdates: [],
+      isAhead: false,
+      isBusy: false,
+    });
+    assert.equal(footerHtml.includes("Uninstall (Project)"), true);
+    assert.match(footerHtml, /<button[^>]*disabled[^>]*>\s*Install \(global\)\s*<\/button>/);
+  });
+
+  it("places README & Notes tab before Security Audit, uses top-left Back button, short owner--name slug, and amber staged notice", () => {
+    const drawerSource = fs.readFileSync(path.resolve("ui/src/drawer.js"), "utf8");
+    const readmeIdx = drawerSource.indexOf('data-drawer-tab="overview"');
+    const auditIdx = drawerSource.indexOf('data-drawer-tab="audit"');
+    assert.notEqual(readmeIdx, -1);
+    assert.notEqual(auditIdx, -1);
+    assert.equal(readmeIdx < auditIdx, true);
+
+    const backIdx = drawerSource.indexOf("mp-drawer-back");
+    const identIdx = drawerSource.indexOf("mp-drawer-ident");
+    assert.notEqual(backIdx, -1);
+    assert.equal(backIdx < identIdx, true);
+    assert.equal(drawerSource.includes(">Close<"), false);
+    assert.equal(drawerSource.includes("${stagedNoticeHtml}${projectWarningHtml}${actionErrorHtml}${bodyHtml}"), true);
+
+    assert.equal(
+      getPluginSlug({ id: "Domush/antigravity-plugin-context-mode", pluginName: "context-mode" }),
+      "domush--context-mode"
+    );
+
+    const stagedHtml = buildStagedUpdateNotice([{ version: "2.0.1", scope: "global" }]);
+    assert.equal(stagedHtml.includes("mp-panel-warning"), true);
+    assert.equal(stagedHtml.includes("pending and will update on restart"), true);
+
+    const actionsSource = fs.readFileSync(path.resolve("ui/src/actions.js"), "utf8");
+    assert.equal(actionsSource.includes("closeDrawer();"), true);
+  });
+
+  it("renders multi-version releaseNotesSinceInstalled with update count heading when skipping versions", () => {
+    const summary = makePlugin({ version: "2.0.1", release: { sha: "reg-sha-201", ref: "v2.0.1" } });
+    const targetInstall = makeInstall({ version: "1.5.0", matchTier: "repo_origin", capabilities: [] });
+    const diff = computePermissionDiff(targetInstall.capabilities, ["mcp_local_exec"]);
+
+    const html = buildAuditBlocks({
+      summary,
+      detail: {
+        latestReleaseNotes: "- Only latest",
+        releaseNotesSinceInstalled: "## v2.0.1\n\n- Latest fix\n\n---\n\n## v2.0.0\n\n- Major feature",
+        releaseNotesVersions: ["2.0.1", "2.0.0"],
+      },
+      collisions: [],
+      preflight: null,
+      findings: [],
+      targetCaps: ["mcp_local_exec"],
+      targetInstall,
+      diff,
+      pending: { type: "update", scope: "global" },
+      isAhead: false,
+      isUpdate: true,
+    });
+
+    assert.equal(html.includes("Release Notes (2 updates since v1.5.0)"), true);
+    assert.equal(html.includes("Major feature"), true);
+    assert.equal(html.includes("Latest fix"), true);
   });
 });

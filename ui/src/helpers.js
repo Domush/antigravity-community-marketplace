@@ -26,9 +26,10 @@ export const state = {
   denylist: { blockedRepos: [], blockedShas: [] },
   prefs: { favorites: [], hidden: [] },
   installed: [], // [{ id, slug, scope: 'global'|'project', version, sha, capabilities, manual }]
+  pendingUpdates: [], // [{ id, slug, scope, version, stagedAt }]
   workspaceRoots: [],
   activeProjectRoot: "",
-  clientVersion: "1.0.7",
+  clientVersion: "1.0.8",
   platform: "",
   dismissedSelfUpdate: false,
   requiresReload: false,
@@ -52,11 +53,12 @@ export const state = {
   drawer: {
     open: false,
     pluginId: null,
-    subTab: "audit", // "audit" | "overview"
+    subTab: "overview", // "overview" | "audit"
     pendingAction: null, // { type: 'install'|'update'|'adopt', scope: 'global'|'project', replaceSlug?, replaceEnabled? } | null
     loading: false,
     detail: null,
     error: null,
+    actionError: null,
   },
 };
 
@@ -139,6 +141,84 @@ export function getInstallsFor(pluginId) {
   return state.installed.filter((i) => (i.id || "").toLowerCase() === lower);
 }
 
+/** Compute the canonical "owner--shortName" install folder slug for a catalog plugin. */
+export function getPluginSlug(plugin) {
+  if (!plugin?.id) return "";
+  const [owner, repo = ""] = String(plugin.id).split("/");
+  let shortName = "";
+  if (typeof plugin.pluginName === "string" && plugin.pluginName.trim()) {
+    shortName = plugin.pluginName
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_.-]+/g, "-")
+      .replace(/^[.-]+|[.-]+$/g, "");
+  }
+  if (!shortName || shortName === "." || shortName === "..") {
+    shortName = repo.toLowerCase();
+  }
+  return `${owner.toLowerCase()}--${shortName}`;
+}
+
+export function getPendingUpdatesFor(pluginId) {
+  const lower = pluginId.toLowerCase();
+  return (state.pendingUpdates || []).filter((p) => (p.id || "").toLowerCase() === lower);
+}
+
+export function hasPendingUpdateFor(pluginId, scope = null) {
+  const lower = String(pluginId || "").toLowerCase();
+  return (state.pendingUpdates || []).some(
+    (p) => String(p.id || "").toLowerCase() === lower && (!scope || p.scope === scope)
+  );
+}
+
+export function scopeBadge(inst, label, plugin) {
+  if (!inst) return "";
+  const status = classifyInstallStatus(inst, plugin);
+  const badges = [];
+  if (inst.enabled === false) {
+    badges.push(
+      `<span class="mp-badge mp-badge-disabled" title="Plugin is paused in ${label} scope (files preserved in plugins-disabled)">Disabled: ${label}</span>`
+    );
+  } else if (inst.matchTier === "exact_hash") {
+    badges.push(
+      `<span class="mp-badge mp-badge-scope" title="Verified ${label} install matching an exact signed registry tree hash">Installed: ${label} (Auto-Matched)</span>`
+    );
+  } else if (inst.matchTier === "repo_origin") {
+    badges.push(
+      `<span class="mp-badge mp-risk-elevated" title="Manually installed in ${label} scope and linked via GitHub repository origin">Manual Origin: ${label}</span>`
+    );
+  } else {
+    badges.push(
+      `<span class="mp-badge mp-badge-scope" title="Managed ${label} installation tracked by the marketplace">Installed: ${label}</span>`
+    );
+  }
+  if (status.isAhead) {
+    badges.push(
+      `<span class="mp-badge mp-badge-ahead" title="Installed local version v${esc(status.installedVersion)} is newer than registry v${esc(status.registryVersion)}">Local v${esc(status.installedVersion)} Ahead</span>`
+    );
+  }
+  return badges.join("");
+}
+
+export function getActionTooltip(meta, scope) {
+  if (meta.isDowngrade) {
+    return `Review release notes and permission diff before downgrading ${scope} install to registry v${meta.registryVersion}`;
+  }
+  return `Review release notes and permission diff before updating ${scope} install to v${meta.registryVersion}`;
+}
+
+export function eyeIconSvg(isHidden) {
+  return isHidden
+    ? `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20C5 20 1 12 1 12a21.77 21.77 0 0 1 5.06-6.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a21.8 21.8 0 0 1-2.16 3.19"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`
+    : `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+}
+
+export function starIconSvg(isFav) {
+  return isFav
+    ? `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`
+    : `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
+}
+
 export function classifyInstallStatus(install, plugin) {
   const installedVersion = typeof install?.version === "string" ? install.version.trim() : "";
   const registryVersion = typeof plugin?.version === "string" ? plugin.version.trim() : "";
@@ -190,7 +270,7 @@ export function getInstallActionMeta(install, plugin) {
     return null;
   }
 
-  const action = status.isRepoOrigin ? "review-adopt" : "review-update";
+  const action = "review-update";
   const regLabel = status.registryVersion || "registry";
   const instLabel = status.installedVersion;
 
@@ -198,7 +278,7 @@ export function getInstallActionMeta(install, plugin) {
     return {
       ...status,
       action,
-      label: `Adopt Registry v${regLabel} (Downgrade)`,
+      label: `Downgrade to v${regLabel}`,
       buttonClass: "mp-btn",
       isPrimary: false,
       isDowngrade: true,
@@ -210,22 +290,17 @@ export function getInstallActionMeta(install, plugin) {
     return {
       ...status,
       action,
-      label: status.isRepoOrigin
-        ? `Adopt & Verify (v${regLabel})`
-        : `Re-sync Verified (v${regLabel})`,
-      buttonClass: status.isRepoOrigin ? "mp-btn" : "mp-btn mp-btn-primary",
-      isPrimary: !status.isRepoOrigin,
+      label: `Re-sync Verified (v${regLabel})`,
+      buttonClass: "mp-btn mp-btn-primary",
+      isPrimary: true,
       isDowngrade: false,
       badgeLabel: null,
     };
   }
 
-  const prefix = "Update";
   const label = instLabel
-    ? `${prefix} ${instLabel} \u2192 ${regLabel}`
-    : status.isRepoOrigin
-      ? `Adopt & Verify (v${regLabel})`
-      : `Re-sync Verified (v${regLabel})`;
+    ? `Update ${instLabel} \u2192 ${regLabel}`
+    : `Update to v${regLabel}`;
 
   return {
     ...status,

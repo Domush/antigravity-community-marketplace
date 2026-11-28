@@ -16,6 +16,11 @@ import {
   TOOL_SCHEMAS,
 } from "./lib/service.mjs";
 import { registerMutatingTools, toolError } from "./tools-mutating.mjs";
+import {
+  applyPendingUpdates,
+  registerShutdownSwapHook,
+  spawnShutdownSwapWorker,
+} from "./lib/pending-updates.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_RESOURCE_URI = "ui://marketplace/app.html";
@@ -90,6 +95,10 @@ server.registerResource(
           resourceDomains: [
             "https://avatars.githubusercontent.com",
             "https://raw.githubusercontent.com",
+            "https://github.com",
+            "https://user-images.githubusercontent.com",
+            "https://camo.githubusercontent.com",
+            "https://img.shields.io",
           ],
         },
       },
@@ -210,6 +219,11 @@ registerMutatingTools(server, { service });
 // ---------------------------------------------------------------------------
 async function main() {
   await store.init();
+  const startupPending = await applyPendingUpdates({ store });
+  if (startupPending.stillLocked.length > 0) {
+    spawnShutdownSwapWorker({ dataDir: OPTS.dataDir, watchPid: process.pid });
+  }
+  registerShutdownSwapHook({ dataDir: OPTS.dataDir, watchPid: process.pid });
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error(`[marketplace-mcp] Ready (dataDir=${OPTS.dataDir}, registry=${OPTS.registryUrl})`);

@@ -21,70 +21,144 @@ function makePlugin(overrides = {}) {
 }
 
 describe("UI card split action button, prominent Details, and header icons", () => {
-  it("shows Install as main button and Install in Project in dropdown when not installed", () => {
+  it("shows Install as main button and Install (project) in dropdown when not installed", () => {
     const model = buildCardActionModel(makePlugin(), [], false);
     assert.equal(model.mainAction.action, "install");
     assert.equal(model.mainAction.scope, "global");
     assert.equal(model.mainAction.label, "Install");
     assert.deepEqual(
       model.menuItems.map((m) => m.label),
-      ["Install in Project"]
+      ["Install (project)"]
     );
   });
 
-  it("shows Uninstall as main button with Disable (Global) and Install in Project when installed globally", () => {
+  it("shows Disable as primary button with transparent dark orange/red class and Uninstall (Global) in dropdown when enabled globally", () => {
     const model = buildCardActionModel(
       makePlugin(),
       [{ id: "acme/tool", slug: "acme--tool", scope: "global", enabled: true, version: "1.2.0" }],
-      false
+      false,
+      []
     );
-    assert.equal(model.mainAction.action, "uninstall");
+    assert.equal(model.mainAction.action, "toggle");
     assert.equal(model.mainAction.scope, "global");
-    assert.equal(model.mainAction.label, "Uninstall");
+    assert.equal(model.mainAction.enabled, true);
+    assert.equal(model.mainAction.variant, "disable");
+    assert.equal(model.mainAction.label, "Disable");
     assert.deepEqual(
       model.menuItems.map((m) => m.label),
-      ["Install in Project", "Disable (Global)"]
+      ["Uninstall (Global)"]
     );
+
+    const prevInstalled = state.installed;
+    const prevPending = state.pendingUpdates;
+    const prevOpenMenu = state.openActionMenuId;
+    try {
+      state.installed = [
+        { id: "acme/tool", slug: "acme--tool", scope: "global", enabled: true, version: "1.2.0" },
+      ];
+      state.pendingUpdates = [];
+      state.openActionMenuId = "acme/tool";
+
+      const html = renderCard(makePlugin());
+      assert.match(html, /class="mp-split-btn mp-split-btn-disable is-open"/);
+      assert.match(
+        html,
+        /class="mp-btn mp-btn-disable mp-split-main"[^>]*data-action="toggle"[^>]*data-scope="global"[^>]*data-slug="acme--tool"[^>]*data-enabled="true"[^>]*>\s*Disable\s*<\/button>/
+      );
+      assert.match(html, /class="mp-btn mp-btn-disable mp-split-toggle"/);
+      assert.match(html, /role="menuitem" class="mp-split-item is-danger"[^>]*data-action="uninstall"[^>]*>Uninstall \(Global\)<\/button>/);
+    } finally {
+      state.installed = prevInstalled;
+      state.pendingUpdates = prevPending;
+      state.openActionMenuId = prevOpenMenu;
+    }
   });
 
-  it("includes Uninstall from Project and Disable/Enable controls when installed in project scope", () => {
+  it("shows Enable as primary button when installed globally and disabled", () => {
+    const model = buildCardActionModel(
+      makePlugin(),
+      [{ id: "acme/tool", slug: "acme--tool", scope: "global", enabled: false, version: "1.2.0" }],
+      false,
+      []
+    );
+    assert.equal(model.mainAction.action, "toggle");
+    assert.equal(model.mainAction.scope, "global");
+    assert.equal(model.mainAction.enabled, false);
+    assert.equal(model.mainAction.variant, "default");
+    assert.equal(model.mainAction.label, "Enable");
+    assert.deepEqual(
+      model.menuItems.map((m) => m.label),
+      ["Uninstall (Global)"]
+    );
+
+    const prevInstalled = state.installed;
+    const prevPending = state.pendingUpdates;
+    const prevOpenMenu = state.openActionMenuId;
+    try {
+      state.installed = [
+        { id: "acme/tool", slug: "acme--tool", scope: "global", enabled: false, version: "1.2.0" },
+      ];
+      state.pendingUpdates = [];
+      state.openActionMenuId = null;
+
+      const html = renderCard(makePlugin());
+      assert.doesNotMatch(html, /mp-split-btn-disable/);
+      assert.match(
+        html,
+        /class="mp-btn mp-split-main"[^>]*data-action="toggle"[^>]*data-scope="global"[^>]*data-slug="acme--tool"[^>]*data-enabled="false"[^>]*>\s*Enable\s*<\/button>/
+      );
+    } finally {
+      state.installed = prevInstalled;
+      state.pendingUpdates = prevPending;
+      state.openActionMenuId = prevOpenMenu;
+    }
+  });
+
+  it("includes scope toggles and Uninstall entries in dropdown for dual-scope installs", () => {
     const model = buildCardActionModel(
       makePlugin(),
       [
         { id: "acme/tool", slug: "acme--tool", scope: "global", enabled: false, version: "1.2.0" },
         { id: "acme/tool", slug: "acme--tool", scope: "project", enabled: true, version: "1.2.0" },
       ],
-      false
+      false,
+      []
     );
-    assert.equal(model.mainAction.action, "uninstall");
+    assert.equal(model.mainAction.action, "toggle");
     assert.equal(model.mainAction.scope, "global");
+    assert.equal(model.mainAction.label, "Enable");
     assert.deepEqual(
       model.menuItems.map((m) => m.label),
-      ["Install in Project", "Enable (Global)", "Disable (Project)", "Uninstall from Project"]
+      ["Disable (Project)", "Uninstall (Global)", "Uninstall (Project)"]
     );
   });
 
-  it("offers Install (Global) in dropdown when only installed in project scope", () => {
+  it("shows Disable as primary and offers Install (global) and Uninstall (Project) in dropdown when only installed in project scope", () => {
     const model = buildCardActionModel(
       makePlugin(),
       [{ id: "acme/tool", slug: "acme--tool", scope: "project", enabled: true, version: "1.2.0" }],
-      false
+      false,
+      []
     );
-    assert.equal(model.mainAction.action, "uninstall");
+    assert.equal(model.mainAction.action, "toggle");
     assert.equal(model.mainAction.scope, "project");
+    assert.equal(model.mainAction.variant, "disable");
+    assert.equal(model.mainAction.label, "Disable");
     assert.deepEqual(
       model.menuItems.map((m) => m.label),
-      ["Install (Global)", "Install in Project", "Disable (Project)", "Uninstall from Project"]
+      ["Install (global)", "Uninstall (Project)"]
     );
   });
 
-  it("renders eye icon before favorite star, prominent Details without Audit button, and open split dropdown", () => {
+  it("renders eye icon before favorite star, Update as primary split button when available, and disabled Pending Restart when staged", () => {
     const prevInstalled = state.installed;
+    const prevPending = state.pendingUpdates;
     const prevOpenMenu = state.openActionMenuId;
     try {
       state.installed = [
-        { id: "acme/tool", slug: "acme--tool", scope: "global", enabled: true, version: "1.2.0" },
+        { id: "acme/tool", slug: "acme--tool", scope: "global", enabled: true, version: "1.1.0", matchTier: "repo_origin" },
       ];
+      state.pendingUpdates = [];
       state.openActionMenuId = "acme/tool";
 
       const html = renderCard(makePlugin());
@@ -96,16 +170,26 @@ describe("UI card split action button, prominent Details, and header icons", () 
       assert.doesNotMatch(html, /Audit &rarr;/);
       assert.match(html, /class="mp-icon-btn mp-fav-btn[^"]*"[^>]*>\s*<svg /);
       assert.match(html, /class="mp-split-menu" role="menu"/);
-      assert.match(html, />Install in Project<\/button>/);
+      assert.doesNotMatch(html, />Install \(project\)<\/button>/);
+      assert.match(html, /class="mp-btn mp-btn-primary mp-split-main"[^>]*data-action="review-update"[^>]*>\s*Update 1\.1\.0/);
       assert.match(html, />Disable \(Global\)<\/button>/);
+      assert.match(html, />Uninstall \(Global\)<\/button>/);
+
+      state.pendingUpdates = [{ id: "acme/tool", slug: "acme--tool", scope: "global", version: "1.2.0" }];
+      const stagedHtml = renderCard(makePlugin());
+      assert.doesNotMatch(stagedHtml, /data-action="review-update"/);
+      assert.match(stagedHtml, /<button[^>]*class="mp-btn mp-split-main"[^>]*disabled[^>]*>\s*Pending Restart\s*<\/button>/);
+      assert.match(stagedHtml, /class="mp-btn mp-split-toggle"[^>]*data-toggle-menu="acme\/tool"/);
 
       state.installed = [];
+      state.pendingUpdates = [];
       state.openActionMenuId = null;
       const uninstalledHtml = renderCard(makePlugin());
       assert.match(uninstalledHtml, /class="mp-btn mp-btn-install mp-split-main"/);
       assert.match(uninstalledHtml, /class="mp-btn mp-btn-install mp-split-toggle"/);
     } finally {
       state.installed = prevInstalled;
+      state.pendingUpdates = prevPending;
       state.openActionMenuId = prevOpenMenu;
     }
   });

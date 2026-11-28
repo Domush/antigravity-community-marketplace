@@ -1,180 +1,45 @@
-import crypto from "node:crypto";
-import { readFileSync } from "node:fs";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { z } from "zod";
-import {
-  computeKeyId,
-  DEFAULT_TRUSTED_PUBLIC_KEYS,
-  RegistryCatalog,
-} from "./catalog.mjs";
 import {
   getPluginsDir,
   installPlugin as installPluginArtifact,
   setPluginEnabled,
   uninstallPlugin as uninstallPluginArtifact,
 } from "./installer.mjs";
+import { applyPendingUpdates, spawnShutdownSwapWorker } from "./pending-updates.mjs";
 import { runPreflightChecks } from "./preflight.mjs";
+import { fetchReleaseNotesSince } from "./release-notes.mjs";
 import { detectLiveCollisions, scanInstalledPlugins } from "./scanner-local.mjs";
 import { filterSelfFromCatalogIndex, isSelfMarketplacePlugin } from "./self-filter.mjs";
 import { compareSemver, parseSemver } from "./semver.mjs";
-import { PluginStore } from "./store.mjs";
+import {
+  CLIENT_MANIFEST_PATH,
+  createCatalogAndStore,
+  DEFAULT_DATA_DIR,
+  DEFAULT_REGISTRY_URL,
+  loadClientVersion,
+  loadTrustedPublicKeys,
+  parseServerArgs,
+  resolveDataDir,
+  ROOT_DIR,
+  STRICT_TOOL_VALIDATORS,
+  TOOL_SCHEMAS,
+  ToolValidationError,
+} from "./service-config.mjs";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const ROOT_DIR = path.resolve(__dirname, "../..");
-export const CLIENT_MANIFEST_PATH = path.resolve(ROOT_DIR, "plugin.json");
-export const DEFAULT_DATA_DIR = path.join(
-  os.homedir(),
-  ".gemini",
-  "config",
-  "plugin-data",
-  "agy-community-marketplace"
-);
-export const DEFAULT_REGISTRY_URL = "https://domush.github.io/antigravity-plugin-registry";
-
-export class ToolValidationError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = "ToolValidationError";
-    this.statusCode = 400;
-  }
-}
-
-export const TOOL_SCHEMAS = {
-  mp_get_bootstrap: {
-    workspaceRoot: z.string().optional(),
-  },
-  mp_check_updates: {
-    workspaceRoot: z.string().optional(),
-  },
-  mp_get_plugin_detail: {
-    id: z.string().min(3),
-    workspaceRoot: z.string().optional(),
-  },
-  mp_install_plugin: {
-    id: z.string().min(3),
-    scope: z.enum(["global", "project"]),
-    workspaceRoot: z.string().optional(),
-    replaceSlug: z.string().optional(),
-    replaceEnabled: z.boolean().optional(),
-  },
-  mp_toggle_plugin: {
-    slug: z.string().min(1),
-    scope: z.enum(["global", "project"]),
-    enabled: z.boolean(),
-    workspaceRoot: z.string().optional(),
-  },
-  mp_uninstall_plugin: {
-    slug: z.string().min(1),
-    id: z.string().optional(),
-    scope: z.enum(["global", "project"]),
-    enabled: z.boolean().optional(),
-    workspaceRoot: z.string().optional(),
-  },
-  mp_update_prefs: {
-    id: z.string().min(1),
-    field: z.enum(["favorites", "hidden"]),
-    value: z.boolean(),
-  },
+export {
+  CLIENT_MANIFEST_PATH,
+  createCatalogAndStore,
+  DEFAULT_DATA_DIR,
+  DEFAULT_REGISTRY_URL,
+  loadClientVersion,
+  loadTrustedPublicKeys,
+  parseServerArgs,
+  resolveDataDir,
+  ROOT_DIR,
+  TOOL_SCHEMAS,
+  ToolValidationError,
 };
-
-const STRICT_TOOL_VALIDATORS = Object.fromEntries(
-  Object.entries(TOOL_SCHEMAS).map(([name, shape]) => [name, z.object(shape).strict()])
-);
-
-export async function loadClientVersion(manifestPath = CLIENT_MANIFEST_PATH) {
-  let raw;
-  try {
-    raw = await fs.readFile(manifestPath, "utf8");
-  } catch (err) {
-    throw new Error(`Failed to read plugin manifest at ${manifestPath}: ${err.message}`);
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    throw new Error(`Failed to parse plugin manifest at ${manifestPath}: ${err.message}`);
-  }
-  if (!parsed || typeof parsed.version !== "string" || !parsed.version.trim()) {
-    throw new Error(`Missing or invalid "version" in plugin manifest at ${manifestPath}`);
-  }
-  return parsed.version.trim();
-}
-
-function requireFlagValue(argv, index, flagName) {
-  const val = argv[index + 1];
-  if (typeof val !== "string" || val.trim().length === 0 || val.startsWith("--")) {
-    throw new Error(`Missing required value for ${flagName}`);
-  }
-  return val;
-}
-
-export function parseServerArgs(argv) {
-  if (!Array.isArray(argv)) {
-    throw new TypeError("parseServerArgs requires argv to be an array");
-  }
-  const opts = {
-    dataDir: DEFAULT_DATA_DIR,
-    registryUrl: DEFAULT_REGISTRY_URL,
-    publicKeyFile: null,
-    insecureSkipVerify: false,
-  };
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg === "--data-dir") {
-      opts.dataDir = requireFlagValue(argv, i, arg);
-      i += 1;
-    } else if (arg === "--registry-url") {
-      opts.registryUrl = requireFlagValue(argv, i, arg);
-      i += 1;
-    } else if (arg === "--public-key-file") {
-      opts.publicKeyFile = requireFlagValue(argv, i, arg);
-      i += 1;
-    } else if (arg === "--insecure-skip-verify") {
-      opts.insecureSkipVerify = true;
-    } else {
-      throw new Error(`Unknown server argument: ${arg}`);
-    }
-  }
-  return opts;
-}
-
-export function loadTrustedPublicKeys(publicKeyFile) {
-  const keys = { ...DEFAULT_TRUSTED_PUBLIC_KEYS };
-  if (!publicKeyFile) return keys;
-
-  const resolved = path.resolve(publicKeyFile);
-  const raw = readFileSync(resolved, "utf8").trim();
-  if (raw.startsWith("{")) {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new Error(`Invalid JSON key map in --public-key-file: ${resolved}`);
-    }
-    return { ...keys, ...parsed };
-  }
-
-  const keyObj = crypto.createPublicKey({ key: raw, format: "pem" });
-  const keyId = computeKeyId(keyObj);
-  keys[keyId] = raw;
-  return keys;
-}
-
-export function createCatalogAndStore({
-  dataDir = DEFAULT_DATA_DIR,
-  registryUrl = DEFAULT_REGISTRY_URL,
-  publicKeyFile = null,
-  insecureSkipVerify = false,
-} = {}) {
-  const store = new PluginStore(dataDir);
-  const trustedPublicKeys = loadTrustedPublicKeys(publicKeyFile);
-  const catalog = new RegistryCatalog(registryUrl, store, {
-    trustedPublicKeys,
-    requireSignatures: !insecureSkipVerify,
-  });
-  return { store, catalog };
-}
 
 export function summarizeStatus(index, denylist, installed) {
   const visiblePlugins = (index.plugins || []).filter((p) => !isSelfMarketplacePlugin(p));
@@ -233,6 +98,7 @@ export function createMarketplaceService({
   store,
   clientVersion,
   resolveWorkspaceRoots = async () => [],
+  spawnPendingWatcher = spawnShutdownSwapWorker,
 }) {
   if (!catalog || !store) {
     throw new TypeError("createMarketplaceService requires catalog and store instances.");
@@ -272,10 +138,11 @@ export function createMarketplaceService({
   }
 
   async function getBootstrap({ workspaceRoot, workspaceRoots } = {}) {
-    const [rawIndex, denylist, prefs, resolvedRoots] = await Promise.all([
+    const [rawIndex, denylist, prefs, pendingUpdates, resolvedRoots] = await Promise.all([
       catalog.getIndex({ force: false }),
       catalog.getDenylist({ force: false }),
       store.getPrefs(),
+      store.getPendingUpdates(),
       resolveRoots(workspaceRoots),
     ]);
 
@@ -294,6 +161,7 @@ export function createMarketplaceService({
         denylist,
         prefs,
         installed,
+        pendingUpdates,
         workspaceRoots: resolvedRoots,
         clientVersion,
         platform: process.platform,
@@ -350,11 +218,38 @@ export function createMarketplaceService({
       installedPlugins: installed,
     });
 
-    const preflight = await runPreflightChecks(detail);
+    const matchingInstalls = installed.filter(
+      (inst) => (inst.id || "").toLowerCase() === pluginEntry.id.toLowerCase()
+    );
+    let oldestInstalledVersion = null;
+    for (const inst of matchingInstalls) {
+      if (parseSemver(inst.version) === null) continue;
+      if (!oldestInstalledVersion || compareSemver(inst.version, oldestInstalledVersion) < 0) {
+        oldestInstalledVersion = inst.version;
+      }
+    }
+
+    const [preflight, sinceNotes] = await Promise.all([
+      runPreflightChecks(detail),
+      fetchReleaseNotesSince({
+        pluginEntry,
+        detail,
+        installedVersion: oldestInstalledVersion,
+        store,
+      }),
+    ]);
+
+    const enrichedDetail = sinceNotes
+      ? {
+          ...detail,
+          releaseNotesSinceInstalled: sinceNotes.markdown,
+          releaseNotesVersions: sinceNotes.versions,
+        }
+      : detail;
 
     return {
       text: `Loaded audit detail for ${pluginEntry.id}.`,
-      structuredContent: { detail, liveCollisions, preflight },
+      structuredContent: { detail: enrichedDetail, liveCollisions, preflight },
     };
   }
 
@@ -379,7 +274,21 @@ export function createMarketplaceService({
       workspaceRoot,
       replaceSlug: replaceSlug || null,
       replaceEnabled,
+      pendingStageRoot: path.join(store.dataDir, "pending-stages"),
     });
+
+    if (record.status === "pending_restart") {
+      await store.upsertPendingUpdate(record.pendingUpdate);
+      spawnPendingWatcher({ dataDir: store.dataDir, watchPid: process.pid });
+      return {
+        text: `Staged update for ${record.pendingUpdate.id}@${record.pendingUpdate.version} (${record.pendingUpdate.scope}). Restart Antigravity App to complete installation.`,
+        structuredContent: {
+          pendingUpdate: record.pendingUpdate,
+          pendingRestart: true,
+          requiresReload: true,
+        },
+      };
+    }
 
     const { migratedFrom, ...lockRecord } = record;
     if (migratedFrom) {
@@ -390,6 +299,12 @@ export function createMarketplaceService({
       });
     }
     await store.upsertInstallRecord(lockRecord);
+    await store.removePendingUpdate({
+      finalDir: lockRecord.installPath,
+      slug: lockRecord.slug,
+      scope,
+      id: lockRecord.id,
+    });
 
     return {
       text: migratedFrom
@@ -398,6 +313,7 @@ export function createMarketplaceService({
       structuredContent: {
         installed: lockRecord,
         migratedFrom: migratedFrom || null,
+        pendingRestart: false,
         requiresReload: true,
       },
     };
@@ -423,6 +339,14 @@ export function createMarketplaceService({
     const expectedInstallPath = path.join(pluginsRoot, slug);
     const res = await uninstallPluginArtifact({ slug, scope, workspaceRoot, enabled });
     await store.removeInstallRecord({ slug, scope, installPath: expectedInstallPath });
+    const removedStages = await store.removePendingUpdate({
+      finalDir: expectedInstallPath,
+      slug,
+      scope,
+    });
+    for (const stageDir of removedStages) {
+      await fs.rm(stageDir, { recursive: true, force: true }).catch(() => {});
+    }
 
     return {
       text: `Uninstalled ${slug} (${scope}).`,
@@ -435,6 +359,60 @@ export function createMarketplaceService({
     return {
       text: `Updated ${field} for ${id}.`,
       structuredContent: { prefs },
+    };
+  }
+
+  async function applyPending() {
+    const denylist = await catalog.getDenylist({ force: false }).catch(() => null);
+    const result = await applyPendingUpdates({ store, denylist });
+    const pendingUpdates = await store.getPendingUpdates();
+    return {
+      text:
+        result.applied.length > 0 && result.stillLocked.length === 0
+          ? `Applied ${result.applied.length} staged update(s).`
+          : result.stillLocked.length > 0
+            ? `${result.stillLocked.length} staged update(s) are still locked by an active plugin process. Close Antigravity App completely to finish.`
+            : "No staged updates pending.",
+      structuredContent: {
+        applied: result.applied,
+        stillLocked: result.stillLocked,
+        failed: result.failed,
+        pendingUpdates,
+        requiresReload: result.applied.length > 0,
+      },
+    };
+  }
+
+  async function cancelPending({ id, scope } = {}) {
+    const current = await store.getPendingUpdates();
+    const targetIdLower = id ? id.toLowerCase() : null;
+    let cancelledCount = 0;
+
+    for (const entry of current) {
+      if (targetIdLower && String(entry.id || "").toLowerCase() !== targetIdLower) continue;
+      if (scope && entry.scope !== scope) continue;
+      const removedStages = await store.removePendingUpdate({
+        finalDir: entry.finalDir,
+        slug: entry.slug,
+        scope: entry.scope,
+        id: entry.id,
+      });
+      for (const stageDir of removedStages) {
+        await fs.rm(stageDir, { recursive: true, force: true }).catch(() => {});
+      }
+      cancelledCount += 1;
+    }
+
+    const pendingUpdates = await store.getPendingUpdates();
+    return {
+      text:
+        cancelledCount > 0
+          ? `Cancelled ${cancelledCount} pending plugin update(s).`
+          : "No matching pending updates to cancel.",
+      structuredContent: {
+        cancelledCount,
+        pendingUpdates,
+      },
     };
   }
 
@@ -467,6 +445,10 @@ export function createMarketplaceService({
         return uninstallPlugin(args);
       case "mp_update_prefs":
         return updatePrefs(args);
+      case "mp_apply_pending_updates":
+        return applyPending();
+      case "mp_cancel_pending_updates":
+        return cancelPending(args);
       default:
         throw new ToolValidationError(`Unknown marketplace tool: ${name}`);
     }
@@ -481,6 +463,8 @@ export function createMarketplaceService({
     togglePlugin,
     uninstallPlugin,
     updatePrefs,
+    applyPending,
+    cancelPending,
     executeTool,
   };
 }

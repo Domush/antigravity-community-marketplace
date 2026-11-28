@@ -150,6 +150,22 @@
   font-size: 11px;
 }
 
+.mp-split-btn-disable .mp-btn-disable {
+  background: rgba(180, 62, 24, 0.24);
+  border-color: rgba(224, 96, 48, 0.48);
+  color: light-dark(#7c2d12, #ffcdb8);
+}
+
+.mp-split-btn-disable .mp-btn-disable:hover:not(:disabled) {
+  background: rgba(196, 70, 28, 0.36);
+  border-color: rgba(242, 122, 72, 0.68);
+  color: light-dark(#5c1d0c, #ffe3d6);
+}
+
+.mp-split-btn-disable .mp-split-toggle {
+  border-left: 1px solid rgba(224, 96, 48, 0.32);
+}
+
 .mp-split-menu {
   position: absolute;
   top: calc(100% + 4px);
